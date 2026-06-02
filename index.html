@@ -1307,7 +1307,6 @@
         <tr>
           <td class="station-cell">
             <div class="cell-main">${escapeHtml(displayName)}（${escapeHtml(formatNumber(currentCount))}）</div>
-            <div class="cell-sub">${escapeHtml(station.code)}</div>
             <div class="cell-sub">可用人力 ${escapeHtml(formatNumber(station.memberCount))} 人</div>
             ${unavailableText}
             <div class="cell-sub">即時在站 ${escapeHtml(formatNumber(currentCount))} 人</div>
@@ -1438,12 +1437,12 @@
       const station = state.stations.find((item) => item && item.code === stationCode);
       if (!station) return '';
       const rule = SCHEDULE_STATION_RULES.find((item) => stationMatchesRule(station, item));
-      return rule ? rule.label : (station.name || station.code || '');
+      return rule ? rule.label : getStationDisplayName(station);
     }
 
     function getScheduleRecordStationLabel(record, codeKey, nameKey) {
       const code = record && record[codeKey];
-      return getScheduleStationLabelByCode(code) || String(record && (record[nameKey] || code) || '').trim();
+      return getScheduleStationLabelByCode(code) || String(record && record[nameKey] || '').trim() || '未命名駐站';
     }
 
     function getStationCountAtDate(station, dateString) {
