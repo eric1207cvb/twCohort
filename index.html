@@ -1,0 +1,1891 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>駐站護理師工時調派</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-strong: #f8fafc;
+      --text: #172033;
+      --muted: #64748b;
+      --line: #d8e0ea;
+      --primary: #0f766e;
+      --primary-strong: #115e59;
+      --danger: #b91c1c;
+      --warning: #b45309;
+      --success: #047857;
+      --shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+      --radius: 8px;
+      font-family: Inter, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 4px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      line-height: 1.2;
+    }
+
+    .subtitle,
+    .user-meta,
+    .muted {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .user-box {
+      text-align: right;
+      display: grid;
+      gap: 4px;
+      min-width: 220px;
+      justify-items: end;
+    }
+
+    .test-mode-btn.is-active {
+      background: #fffbeb;
+      border-color: #f59e0b;
+      color: #92400e;
+    }
+
+    .toolbar {
+      padding: 14px 24px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+      gap: 12px;
+      align-items: end;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-strong);
+    }
+
+    .bottom-toolbar {
+      border-top: 1px solid var(--line);
+      border-bottom: 0;
+      margin-top: 4px;
+    }
+
+    .layout {
+      padding: 20px 24px 28px;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-header {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .panel-title {
+      font-weight: 800;
+      font-size: 1rem;
+    }
+
+    .panel-body {
+      padding: 18px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.82rem;
+      color: #334155;
+      font-weight: 800;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 10px 11px;
+      min-height: 42px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 86px;
+      resize: vertical;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    .two-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      margin-top: 4px;
+    }
+
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      min-height: 40px;
+      padding: 9px 13px;
+      font-weight: 800;
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-strong);
+    }
+
+    .btn-danger {
+      background: #fee2e2;
+      color: var(--danger);
+      border-color: #fecaca;
+    }
+
+    .btn-ghost {
+      background: #fff;
+      border-color: var(--line);
+    }
+
+    .content-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .stat {
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .stat-value {
+      font-size: 1.55rem;
+      font-weight: 900;
+      color: var(--primary-strong);
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .schedule-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: end;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .schedule-toolbar .field {
+      min-width: 120px;
+    }
+
+    .schedule-matrix-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      max-height: 68vh;
+      background: #fff;
+    }
+
+    .schedule-matrix {
+      min-width: 3200px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
+    .schedule-matrix.is-month-view {
+      min-width: 1980px;
+    }
+
+    .schedule-matrix th,
+    .schedule-matrix td {
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 8px;
+      min-width: 154px;
+    }
+
+    .schedule-matrix th:first-child,
+    .schedule-matrix td:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      min-width: 190px;
+      background: #fff;
+    }
+
+    .schedule-matrix thead th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      text-align: center;
+    }
+
+    .schedule-matrix thead th:first-child {
+      z-index: 4;
+      background: var(--surface-strong);
+    }
+
+    .station-cell {
+      font-weight: 900;
+      background: #fff7ed !important;
+    }
+
+    .schedule-cell {
+      vertical-align: top;
+      background: #fff;
+      min-height: 58px;
+    }
+
+    .schedule-cell.has-movement {
+      background: #fef9c3;
+    }
+
+    .schedule-cell.is-green {
+      background: #dcfce7;
+    }
+
+    .schedule-cell.is-red {
+      background: #fee2e2;
+    }
+
+    .schedule-count {
+      font-weight: 900;
+      font-size: 0.82rem;
+      color: #172033;
+      margin-bottom: 6px;
+    }
+
+    .movement-entry {
+      border-radius: 4px;
+      padding: 5px 6px;
+      margin-bottom: 5px;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      font-weight: 800;
+      word-break: break-word;
+    }
+
+    .movement-in {
+      background: rgba(15, 118, 110, 0.13);
+      color: #115e59;
+    }
+
+    .movement-out {
+      background: rgba(185, 28, 28, 0.13);
+      color: #991b1b;
+    }
+
+    .schedule-entry {
+      display: block;
+      border-radius: 4px;
+      padding: 5px 6px;
+      margin: 0 0 5px;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      font-weight: 800;
+      color: #263244;
+      word-break: break-word;
+    }
+
+    .schedule-tone-0 { background: #fef9c3; color: #713f12; }
+    .schedule-tone-1 { background: #dbeafe; color: #1e3a8a; }
+    .schedule-tone-2 { background: #dcfce7; color: #14532d; }
+    .schedule-tone-3 { background: #fce7f3; color: #831843; }
+    .schedule-tone-4 { background: #ede9fe; color: #4c1d95; }
+    .schedule-tone-5 { background: #ffedd5; color: #7c2d12; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 820px;
+    }
+
+    th,
+    td {
+      padding: 11px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: var(--surface-strong);
+      color: #334155;
+      font-size: 0.78rem;
+      text-transform: none;
+      white-space: nowrap;
+    }
+
+    .cell-main {
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .cell-sub {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      word-break: break-word;
+    }
+
+    .temp-badge {
+      display: inline-block;
+      border-radius: 4px;
+      padding: 3px 7px;
+      background: #fee2e2;
+      color: #991b1b;
+      font-size: 0.78rem;
+      font-weight: 900;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      white-space: nowrap;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .status.error {
+      color: var(--danger);
+      font-weight: 800;
+    }
+
+    .status.success {
+      color: var(--success);
+      font-weight: 800;
+    }
+
+    .empty {
+      padding: 22px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: var(--radius);
+      background: var(--surface-strong);
+    }
+
+    .loading-screen {
+      padding: 48px 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 980px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .user-box {
+        text-align: left;
+        min-width: 0;
+      }
+
+      .toolbar,
+      .layout,
+      .stats {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .topbar,
+      .toolbar,
+      .layout {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      .two-cols {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      .topbar,
+      .bottom-toolbar,
+      .toolbar,
+      .layout > .panel:first-child,
+      #records-table-wrap,
+      #records-empty,
+      .schedule-toolbar {
+        display: none !important;
+      }
+
+      body {
+        background: #fff;
+      }
+
+      .layout,
+      .content-stack {
+        display: block;
+        padding: 0;
+      }
+
+      .panel {
+        box-shadow: none;
+        border: 0;
+      }
+
+      .schedule-matrix-wrap {
+        max-height: none;
+        overflow: visible;
+        border: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>駐站護理師工時調派</h1>
+        <div class="subtitle">正式人員與組別資料作為來源，僅同步標註臨時調配欄。</div>
+      </div>
+      <div class="user-box">
+        <strong id="viewer-name">讀取中</strong>
+        <span id="viewer-email" class="user-meta"></span>
+        <button class="btn btn-ghost test-mode-btn hidden" type="button" id="test-mode-btn">啟用測試模式</button>
+      </div>
+    </header>
+
+    <div id="loading" class="loading-screen">正在讀取駐站與護理師資料...</div>
+
+    <main id="app-main" class="layout hidden">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title" id="form-title">新增工時調派</div>
+            <div class="muted">唯一鍵：護理師信箱 + 所屬組別代碼</div>
+          </div>
+          <button class="btn btn-ghost hidden" type="button" id="cancel-edit-btn">取消編輯</button>
+        </div>
+        <div class="panel-body">
+          <form id="dispatch-form" class="form-grid">
+            <input id="record-id" type="hidden">
+            <div class="two-cols">
+              <div class="field">
+                <label for="dispatch-start-date">調派起日</label>
+                <input id="dispatch-start-date" type="date" required>
+              </div>
+              <div class="field">
+                <label for="dispatch-end-date">調派迄日</label>
+                <input id="dispatch-end-date" type="date" required>
+              </div>
+            </div>
+            <div class="field">
+              <label for="nurse-origin-station">駐站</label>
+              <select id="nurse-origin-station"></select>
+            </div>
+            <div class="field">
+              <label for="nurse-select">主職護理師</label>
+              <select id="nurse-select" required></select>
+            </div>
+            <div class="field">
+              <label for="station-select">調派駐站</label>
+              <select id="station-select" required></select>
+            </div>
+            <div class="two-cols">
+              <div class="field">
+                <label for="shift-name">班別</label>
+                <select id="shift-name"></select>
+              </div>
+              <div class="field">
+                <label for="hours-input">工作時數</label>
+                <input id="hours-input" type="number" min="0.25" max="24" step="0.25" inputmode="decimal" required>
+              </div>
+            </div>
+            <div class="two-cols">
+              <div class="field">
+                <label for="start-time">開始時間</label>
+                <input id="start-time" type="time">
+              </div>
+              <div class="field">
+                <label for="end-time">結束時間</label>
+                <input id="end-time" type="time">
+              </div>
+            </div>
+            <div class="field">
+              <label for="note-input">備註</label>
+              <textarea id="note-input" maxlength="300"></textarea>
+            </div>
+            <div class="status" id="form-status"></div>
+            <div class="button-row">
+              <button class="btn btn-ghost" type="button" id="clear-form-btn">清空</button>
+              <button class="btn btn-primary" type="submit" id="save-btn">儲存調派</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <div class="content-stack">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">區間統計</div>
+              <div class="muted" id="summary-range">-</div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="stats">
+              <div class="stat">
+                <div class="stat-value" id="stat-hours">0</div>
+                <div class="stat-label">總工時</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value" id="stat-records">0</div>
+                <div class="stat-label">調派筆數</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value" id="stat-nurses">0</div>
+                <div class="stat-label">護理師人數</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value" id="stat-temp-count">0</div>
+                <div class="stat-label">臨調次數</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value" id="stat-temp-hours">0</div>
+                <div class="stat-label">臨調時數</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title" id="schedule-title">年度月曆</div>
+              <div class="muted" id="schedule-description">依駐站與月份標示調入、調出與人數變化。</div>
+            </div>
+            <div class="schedule-toolbar">
+              <div class="field">
+                <label for="schedule-view">檢視</label>
+                <select id="schedule-view">
+                  <option value="month">月曆</option>
+                  <option value="week">週曆</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="schedule-year">年度</label>
+                <input id="schedule-year" type="number" min="2020" max="2100" step="1">
+              </div>
+              <button class="btn btn-ghost" type="button" id="schedule-year-load">載入年度</button>
+              <button class="btn btn-ghost" type="button" id="print-schedule-btn">列印矩陣</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="schedule-empty" class="empty hidden">目前沒有可產生矩陣的駐站資料。</div>
+            <div id="schedule-matrix-wrap" class="schedule-matrix-wrap">
+              <table class="schedule-matrix" id="schedule-table">
+                <thead id="schedule-head"></thead>
+                <tbody id="schedule-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">調派紀錄</div>
+              <div class="muted">依調派期間、駐站、開始時間排序</div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="records-empty" class="empty hidden">目前沒有符合條件的工時調派紀錄。</div>
+            <div id="records-table-wrap" class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>期間</th>
+                    <th>駐站</th>
+                    <th>護理師</th>
+                    <th>臨時調配</th>
+                    <th>班別</th>
+                    <th>時間</th>
+                    <th>時數</th>
+                    <th>備註</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="records-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <section class="toolbar bottom-toolbar" id="toolbar">
+      <div class="field">
+        <label for="filter-date-from">起始日期</label>
+        <input id="filter-date-from" type="date">
+      </div>
+      <div class="field">
+        <label for="filter-date-to">結束日期</label>
+        <input id="filter-date-to" type="date">
+      </div>
+      <div class="field">
+        <label for="filter-station">駐站</label>
+        <select id="filter-station"></select>
+      </div>
+      <div class="field">
+        <label for="filter-nurse">護理師</label>
+        <select id="filter-nurse"></select>
+      </div>
+      <div class="field">
+        <label for="filter-keyword">紀錄數</label>
+        <input id="record-count-display" type="text" readonly>
+      </div>
+      <button class="btn btn-primary" type="button" id="reload-btn">重新整理</button>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      viewer: null,
+      stations: [],
+      nurses: [],
+      records: [],
+      scheduleRecords: [],
+      currentRecords: [],
+      filters: {},
+      shiftOptions: [],
+      isSaving: false,
+      testMode: false,
+      scheduleView: 'month',
+      scheduleYear: new Date().getFullYear()
+    };
+
+    const SCHEDULE_STATION_RULES = [
+      { label: '台北', keywords: ['台北'] },
+      { label: '部立桃園', keywords: ['部立桃園', '桃園'] },
+      { label: '新竹台大', keywords: ['新竹台大', '台大醫院新竹', '新竹'] },
+      { label: '部立苗栗', keywords: ['部立苗栗', '苗栗'] },
+      { label: '台中豐原', keywords: ['台中豐原', '豐原'] },
+      { label: '員基', keywords: ['員基', '員林基督教', '員林'] },
+      { label: '部嘉', keywords: ['部嘉', '嘉義'] },
+      { label: '台南市醫', keywords: ['台南市醫', '台南市立'] },
+      { label: '安南', keywords: ['安南'] },
+      { label: '高雄大同', keywords: ['高雄大同', '大同'] },
+      { label: '高雄義大', keywords: ['高雄義大', '義大'] },
+      { label: '民生', keywords: ['民生'] },
+      { label: '部立屏東', keywords: ['部立屏東', '屏東'] },
+      { label: '宜蘭羅東聖母', keywords: ['羅東聖母', '宜蘭羅東', '聖母'] },
+      { label: '部立台東', keywords: ['部立台東', '台東'] },
+      { label: '花蓮門諾', keywords: ['花蓮門諾', '門諾'] },
+      { label: '澎湖三總', keywords: ['澎湖三總', '澎湖', '三總'] }
+    ];
+
+    const el = {};
+
+    document.addEventListener('DOMContentLoaded', () => {
+      bindElements();
+      bindEvents();
+      const year = new Date().getFullYear();
+      state.scheduleYear = year;
+      el.scheduleYear.value = year;
+      loadData({
+        dateFrom: `${year}-01-01`,
+        dateTo: `${year}-12-31`
+      });
+    });
+
+    function bindElements() {
+      [
+        'viewer-name',
+        'viewer-email',
+        'test-mode-btn',
+        'toolbar',
+        'loading',
+        'app-main',
+        'filter-date-from',
+        'filter-date-to',
+        'filter-station',
+        'filter-nurse',
+        'record-count-display',
+        'reload-btn',
+        'schedule-title',
+        'schedule-description',
+        'schedule-view',
+        'schedule-year',
+        'schedule-year-load',
+        'print-schedule-btn',
+        'schedule-table',
+        'schedule-empty',
+        'schedule-matrix-wrap',
+        'schedule-head',
+        'schedule-body',
+        'dispatch-form',
+        'record-id',
+        'form-title',
+        'cancel-edit-btn',
+        'dispatch-start-date',
+        'dispatch-end-date',
+        'nurse-origin-station',
+        'station-select',
+        'nurse-select',
+        'shift-name',
+        'hours-input',
+        'start-time',
+        'end-time',
+        'note-input',
+        'form-status',
+        'clear-form-btn',
+        'save-btn',
+        'summary-range',
+        'stat-hours',
+        'stat-records',
+        'stat-nurses',
+        'stat-temp-count',
+        'stat-temp-hours',
+        'records-empty',
+        'records-table-wrap',
+        'records-body'
+      ].forEach((id) => {
+        el[toCamel(id)] = document.getElementById(id);
+      });
+    }
+
+    function bindEvents() {
+      el.reloadBtn.addEventListener('click', () => loadData(collectFilters()));
+      el.testModeBtn.addEventListener('click', () => {
+        state.testMode = !state.testMode;
+        loadData(collectFilters());
+      });
+      el.scheduleView.addEventListener('change', () => {
+        state.scheduleView = el.scheduleView.value === 'week' ? 'week' : 'month';
+        renderScheduleMatrix();
+      });
+      el.scheduleYearLoad.addEventListener('click', loadScheduleYear);
+      el.printScheduleBtn.addEventListener('click', () => window.print());
+      el.filterDateFrom.addEventListener('change', () => loadData(collectFilters()));
+      el.filterDateTo.addEventListener('change', () => loadData(collectFilters()));
+      el.filterStation.addEventListener('change', () => {
+        renderFilterNurseOptions();
+        loadData(collectFilters());
+      });
+      el.filterNurse.addEventListener('change', () => loadData(collectFilters()));
+      el.nurseOriginStation.addEventListener('change', renderFormNurseOptions);
+      el.shiftName.addEventListener('change', () => applyShiftDefaults(false));
+      el.dispatchStartDate.addEventListener('change', () => {
+        if (!el.dispatchEndDate.value || el.dispatchEndDate.value < el.dispatchStartDate.value) {
+          el.dispatchEndDate.value = el.dispatchStartDate.value;
+        }
+      });
+      el.dispatchEndDate.addEventListener('change', () => {
+        if (el.dispatchStartDate.value && el.dispatchEndDate.value < el.dispatchStartDate.value) {
+          el.dispatchEndDate.value = el.dispatchStartDate.value;
+          setStatus('調派迄日已調整為不早於起日。', 'error');
+        }
+      });
+      el.startTime.addEventListener('input', updateHoursFromTimes);
+      el.endTime.addEventListener('input', updateHoursFromTimes);
+      el.clearFormBtn.addEventListener('click', resetForm);
+      el.cancelEditBtn.addEventListener('click', resetForm);
+      el.dispatchForm.addEventListener('submit', saveDispatch);
+    }
+
+    async function loadData(filters) {
+      setPageLoading(true);
+      setStatus('');
+      try {
+        const response = await callServer('getDispatchAppData', filters || {});
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '資料讀取失敗。');
+        }
+        applyData(response);
+      } catch (error) {
+        showLoadError(error && error.message ? error.message : '資料讀取失敗。');
+      } finally {
+        setPageLoading(false);
+      }
+    }
+
+    function applyData(response) {
+      state.viewer = response.viewer || {};
+      state.stations = Array.isArray(response.stations) ? response.stations : [];
+      state.nurses = Array.isArray(response.nurses) ? response.nurses : [];
+      state.records = Array.isArray(response.records) ? response.records : [];
+      state.scheduleRecords = Array.isArray(response.scheduleRecords) ? response.scheduleRecords : state.records.slice();
+      state.currentRecords = Array.isArray(response.currentRecords) ? response.currentRecords : [];
+      state.filters = response.filters || {};
+      state.shiftOptions = Array.isArray(response.shiftOptions) ? response.shiftOptions : ['日班', '上午', '下午', '夜班'];
+      state.testMode = Boolean(state.viewer && state.viewer.testMode);
+      state.scheduleYear = inferScheduleYear();
+      state.scheduleView = state.scheduleView === 'week' ? 'week' : 'month';
+
+      el.viewerName.textContent = state.viewer.name || '未命名使用者';
+      el.viewerEmail.textContent = [state.viewer.email || '', state.testMode ? '測試模式' : ''].filter(Boolean).join('｜');
+      renderTestModeControl();
+
+      el.filterDateFrom.value = state.filters.dateFrom || '';
+      el.filterDateTo.value = state.filters.dateTo || '';
+
+      renderStationOptions();
+      renderShiftOptions();
+      renderFilterNurseOptions();
+      renderFormNurseOptions();
+      renderSummary();
+      renderScheduleMatrix();
+      renderRecords();
+
+      if (!state.stations.length) {
+        el.appMain.classList.add('hidden');
+        el.loading.classList.remove('hidden');
+        el.loading.textContent = state.viewer && state.viewer.canUseTestMode
+          ? '目前一般權限沒有可管理的駐站。可按右上角「啟用測試模式」讀取測試候選。'
+          : '目前登入帳號沒有可管理的駐站。';
+        return;
+      }
+
+      el.appMain.classList.remove('hidden');
+      el.recordCountDisplay.value = `${state.records.length} 筆`;
+      el.scheduleView.value = state.scheduleView;
+      el.scheduleYear.value = state.scheduleYear;
+      if (!el.dispatchStartDate.value) el.dispatchStartDate.value = getDefaultDispatchDate();
+      if (!el.dispatchEndDate.value) el.dispatchEndDate.value = el.dispatchStartDate.value;
+    }
+
+    function renderTestModeControl() {
+      if (!state.viewer || !state.viewer.canUseTestMode) {
+        el.testModeBtn.classList.add('hidden');
+        el.testModeBtn.classList.remove('is-active');
+        return;
+      }
+
+      el.testModeBtn.classList.remove('hidden');
+      el.testModeBtn.classList.toggle('is-active', state.testMode);
+      el.testModeBtn.textContent = state.testMode ? '關閉測試模式' : '啟用測試模式';
+    }
+
+    function renderStationOptions() {
+      const selectedOriginStation = el.nurseOriginStation.value || '';
+      const stationOptions = [
+        '<option value="">全部駐站</option>',
+        ...state.stations.map((station) => (
+          `<option value="${escapeHtml(station.code)}">${escapeHtml(station.name || station.code)} (${escapeHtml(station.code)})</option>`
+        ))
+      ].join('');
+      el.filterStation.innerHTML = stationOptions;
+      el.filterStation.value = state.filters.stationCode || '';
+
+      el.stationSelect.innerHTML = state.stations.map((station) => (
+        `<option value="${escapeHtml(station.code)}">${escapeHtml(station.name || station.code)} (${escapeHtml(station.code)})</option>`
+      )).join('');
+      if (!el.stationSelect.value && state.stations[0]) {
+        el.stationSelect.value = state.stations[0].code;
+      }
+
+      el.nurseOriginStation.innerHTML = [
+        '<option value="">全部原駐站</option>',
+        ...state.stations.map((station) => (
+          `<option value="${escapeHtml(station.code)}">${escapeHtml(station.name || station.code)} (${escapeHtml(station.code)})</option>`
+        ))
+      ].join('');
+      el.nurseOriginStation.value = selectedOriginStation;
+    }
+
+    function renderFilterNurseOptions() {
+      const stationCode = el.filterStation.value || '';
+      const nurses = stationCode ? getNursesForStation(stationCode) : [];
+      el.filterNurse.innerHTML = [
+        `<option value="">${stationCode ? '全部原駐站護理師' : '請先選擇駐站'}</option>`,
+        ...nurses.map((nurse) => (
+          `<option value="${escapeHtml(nurse.email)}">${escapeHtml(nurse.name || nurse.email)}｜${escapeHtml(nurse.email)}｜${escapeHtml(nurse.orgName || nurse.orgCode)}</option>`
+        ))
+      ].join('');
+      const filterNurseEmail = state.filters.nurseEmail || '';
+      el.filterNurse.value = nurses.some((nurse) => nurse.email === filterNurseEmail) ? filterNurseEmail : '';
+    }
+
+    function renderFormNurseOptions() {
+      const selectedAssignmentKey = el.nurseSelect.value || '';
+      const nurses = getNursesForStation(el.nurseOriginStation.value || '');
+      el.nurseSelect.innerHTML = nurses.length
+        ? nurses.map((nurse) => (
+            `<option value="${escapeHtml(nurse.assignmentKey)}">${escapeHtml(nurse.name || nurse.email)}｜${escapeHtml(nurse.email)}｜${escapeHtml(nurse.orgName || nurse.orgCode)}</option>`
+          )).join('')
+        : '<option value="">此原駐站沒有可調派的收案人員</option>';
+      if (selectedAssignmentKey && nurses.some((nurse) => nurse.assignmentKey === selectedAssignmentKey)) {
+        el.nurseSelect.value = selectedAssignmentKey;
+      }
+    }
+
+    function renderShiftOptions() {
+      el.shiftName.innerHTML = state.shiftOptions.map((shift) => (
+        `<option value="${escapeHtml(shift)}">${escapeHtml(shift)}</option>`
+      )).join('');
+      applyShiftDefaults(false);
+    }
+
+    function renderSummary() {
+      const totalHours = state.records.reduce((sum, record) => sum + Number(record.hours || 0), 0);
+      const nurseSet = new Set(state.records.map((record) => record.assignmentKey).filter(Boolean));
+      const temporaryRecords = state.records.filter((record) => getTemporaryDispatchInfo(record).isTemporary);
+      const temporaryHours = temporaryRecords.reduce((sum, record) => sum + getDispatchTotalHours(record), 0);
+      el.summaryRange.textContent = `${state.filters.dateFrom || '-'} 至 ${state.filters.dateTo || '-'}`;
+      el.statHours.textContent = formatNumber(totalHours);
+      el.statRecords.textContent = String(state.records.length);
+      el.statNurses.textContent = String(nurseSet.size);
+      el.statTempCount.textContent = String(temporaryRecords.length);
+      el.statTempHours.textContent = formatNumber(temporaryHours);
+    }
+
+    function renderScheduleMatrix() {
+      const year = Number(state.scheduleYear || new Date().getFullYear());
+      const scheduleStations = getScheduleStations();
+
+      if (!scheduleStations.length) {
+        el.scheduleEmpty.classList.remove('hidden');
+        el.scheduleMatrixWrap.classList.add('hidden');
+        el.scheduleHead.innerHTML = '';
+        el.scheduleBody.innerHTML = '';
+        return;
+      }
+
+      el.scheduleEmpty.classList.add('hidden');
+      el.scheduleMatrixWrap.classList.remove('hidden');
+      el.scheduleTable.classList.toggle('is-month-view', state.scheduleView !== 'week');
+
+      if (state.scheduleView === 'week') {
+        renderWeeklyScheduleMatrix(year, scheduleStations);
+        return;
+      }
+
+      renderMonthlyScheduleMatrix(year, scheduleStations);
+    }
+
+    function renderMonthlyScheduleMatrix(year, scheduleStations) {
+      const months = buildYearMonths(year);
+      el.scheduleTitle.textContent = '年度月曆';
+      el.scheduleDescription.textContent = '依駐站與月份標示調入、調出與人數變化。';
+      el.scheduleHead.innerHTML = `
+        <tr>
+          <th>駐站</th>
+          ${months.map((month) => `<th>${escapeHtml(month.label)}</th>`).join('')}
+        </tr>
+      `;
+      el.scheduleBody.innerHTML = scheduleStations.map((station) => {
+        const cells = months.map((month) => {
+          const cell = buildMonthlyScheduleCellData(station, month);
+          return `<td class="schedule-cell ${cell.className}">${cell.html}</td>`;
+        }).join('');
+        return buildScheduleStationRowHtml(station, cells);
+      }).join('');
+    }
+
+    function renderWeeklyScheduleMatrix(year, scheduleStations) {
+      const weeks = buildVisibleYearWeeks(year);
+      el.scheduleTitle.textContent = '年度週排程';
+      el.scheduleDescription.textContent = year === new Date().getFullYear()
+        ? '從本週開始，依駐站與週次標示調入、調出與人數變化。'
+        : '依駐站與週次標示調入、調出與人數變化。';
+      el.scheduleHead.innerHTML = `
+        <tr>
+          <th>駐站</th>
+          ${weeks.map((week) => `
+            <th>
+              <div>第 ${week.index} 週</div>
+              <div class="cell-sub">${escapeHtml(formatWeekRange(week))}</div>
+            </th>
+          `).join('')}
+        </tr>
+      `;
+      el.scheduleBody.innerHTML = scheduleStations.map((station) => {
+        const cells = weeks.map((week) => {
+          const cell = buildWeeklyScheduleCellData(station, week);
+          return `<td class="schedule-cell ${cell.className}">${cell.html}</td>`;
+        }).join('');
+        return buildScheduleStationRowHtml(station, cells);
+      }).join('');
+    }
+
+    function buildScheduleStationRowHtml(station, cells) {
+      const currentCount = getStationCountAtDate(station, getTodayString());
+      const displayName = station.scheduleLabel || station.name || station.code;
+      return `
+        <tr>
+          <td class="station-cell">
+            <div class="cell-main">${escapeHtml(displayName)}（${escapeHtml(formatNumber(currentCount))}）</div>
+            <div class="cell-sub">${escapeHtml(station.code)}</div>
+            <div class="cell-sub">原編制 ${escapeHtml(formatNumber(station.memberCount))} 人</div>
+            <div class="cell-sub">即時在站 ${escapeHtml(formatNumber(currentCount))} 人</div>
+          </td>
+          ${cells}
+        </tr>
+      `;
+    }
+
+    function buildMonthlyScheduleCellData(station, month) {
+      const stationCode = station.code;
+      const baseCount = Number(station.memberCount || 0);
+      const movements = getMonthlyMovementRecords(stationCode, month);
+      const incomingKeys = new Set();
+      const outgoingKeys = new Set();
+
+      movements.forEach((record) => {
+        if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
+        if (record.originalStationCode === stationCode) outgoingKeys.add(record.assignmentKey);
+      });
+
+      const adjustedCount = Math.max(0, baseCount - outgoingKeys.size + incomingKeys.size);
+      const className = buildScheduleCellClassName(adjustedCount, movements.length);
+      const countText = baseCount === adjustedCount
+        ? `人數 ${formatNumber(baseCount)}`
+        : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
+      const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, month.start, month.end);
+
+      return {
+        className,
+        html: `<div class="schedule-count">${escapeHtml(countText)}</div>${movementHtml}`
+      };
+    }
+
+    function buildWeeklyScheduleCellData(station, week) {
+      const stationCode = station.code;
+      const baseCount = Number(station.memberCount || 0);
+      const movements = getWeeklyMovementRecords(stationCode, week);
+      const incomingKeys = new Set();
+      const outgoingKeys = new Set();
+
+      movements.forEach((record) => {
+        if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
+        if (record.originalStationCode === stationCode) outgoingKeys.add(record.assignmentKey);
+      });
+
+      const adjustedCount = Math.max(0, baseCount - outgoingKeys.size + incomingKeys.size);
+      const className = buildScheduleCellClassName(adjustedCount, movements.length);
+      const countText = baseCount === adjustedCount
+        ? `人數 ${formatNumber(baseCount)}`
+        : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
+      const movementHtml = movements.map((record) => buildMovementEntryHtml(record, stationCode, week.start, week.end)).join('');
+
+      return {
+        className,
+        html: `<div class="schedule-count">${escapeHtml(countText)}</div>${movementHtml}`
+      };
+    }
+
+    function buildScheduleCellClassName(adjustedCount, movementCount) {
+      const classes = [];
+      if (movementCount) classes.push('has-movement');
+      if (adjustedCount >= 3) classes.push('is-green');
+      if (adjustedCount === 2) classes.push('is-red');
+      return classes.join(' ');
+    }
+
+    function getScheduleStations() {
+      const usedCodes = new Set();
+      return SCHEDULE_STATION_RULES.map((rule) => {
+        const station = state.stations.find((item) => {
+          if (!item || usedCodes.has(item.code)) return false;
+          return stationMatchesRule(item, rule);
+        });
+        if (!station) return null;
+        usedCodes.add(station.code);
+        return {
+          ...station,
+          scheduleLabel: rule.label
+        };
+      }).filter(Boolean);
+    }
+
+    function stationMatchesRule(station, rule) {
+      const source = normalizeStationText([
+        station.name,
+        station.code,
+        station.managerName
+      ].filter(Boolean).join(' '));
+      return (rule.keywords || []).some((keyword) => source.includes(normalizeStationText(keyword)));
+    }
+
+    function normalizeStationText(value) {
+      return String(value || '')
+        .replace(/\s+/g, '')
+        .replace(/[()（）]/g, '')
+        .replace(/駐站/g, '')
+        .toLowerCase();
+    }
+
+    function getStationCountAtDate(station, dateString) {
+      const baseCount = Number(station && station.memberCount || 0);
+      const stationCode = station && station.code;
+      const incomingKeys = new Set();
+      const outgoingKeys = new Set();
+      const today = getTodayString();
+      const sourceRecords = dateString === today && Array.isArray(state.currentRecords)
+        ? state.currentRecords
+        : (state.scheduleRecords.length ? state.scheduleRecords : state.records);
+
+      sourceRecords.forEach((record) => {
+        const temporaryInfo = getTemporaryDispatchInfo(record);
+        if (!temporaryInfo.isTemporary || !recordOverlapsRange(record, dateString, dateString)) return;
+        if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
+        if (record.originalStationCode === stationCode) outgoingKeys.add(record.assignmentKey);
+      });
+
+      return Math.max(0, baseCount - outgoingKeys.size + incomingKeys.size);
+    }
+
+    function getMonthlyMovementRecords(stationCode, month) {
+      const map = new Map();
+      const sourceRecords = state.scheduleRecords.length ? state.scheduleRecords : state.records;
+      sourceRecords
+        .filter((record) => {
+          const temporaryInfo = getTemporaryDispatchInfo(record);
+          return temporaryInfo.isTemporary
+            && recordOverlapsRange(record, month.start, month.end)
+            && (record.stationCode === stationCode || record.originalStationCode === stationCode);
+        })
+        .sort((a, b) => String(getRecordStartDate(a)).localeCompare(String(getRecordStartDate(b))))
+        .forEach((record) => {
+          map.set(`${record.id || record.assignmentKey}:${record.stationCode}:${record.originalStationCode}`, record);
+        });
+      return Array.from(map.values());
+    }
+
+    function getWeeklyMovementRecords(stationCode, week) {
+      const map = new Map();
+      const sourceRecords = state.scheduleRecords.length ? state.scheduleRecords : state.records;
+      sourceRecords
+        .filter((record) => {
+          const temporaryInfo = getTemporaryDispatchInfo(record);
+          return temporaryInfo.isTemporary
+            && recordOverlapsRange(record, week.start, week.end)
+            && (record.stationCode === stationCode || record.originalStationCode === stationCode);
+        })
+        .sort((a, b) => String(getRecordStartDate(a)).localeCompare(String(getRecordStartDate(b))))
+        .forEach((record) => {
+          map.set(`${record.id || record.assignmentKey}:${record.stationCode}:${record.originalStationCode}`, record);
+        });
+      return Array.from(map.values());
+    }
+
+    function buildGroupedMovementEntriesHtml(records, stationCode, rangeStart, rangeEnd) {
+      const groups = new Map();
+
+      records.forEach((record) => {
+        const overlapRange = getRecordOverlapRange(record, rangeStart, rangeEnd);
+        if (!overlapRange) return;
+        const isIncoming = record.stationCode === stationCode;
+        const direction = isIncoming ? '+1 調入' : '-1 調出';
+        const relatedText = isIncoming
+          ? `原：${record.originalStationName || record.originalStationCode}`
+          : `至：${record.stationName || record.stationCode}`;
+        const key = [
+          direction,
+          record.assignmentKey || record.nurseEmail || '',
+          relatedText
+        ].join('::');
+
+        if (!groups.has(key)) {
+          groups.set(key, {
+            direction,
+            relatedText,
+            className: isIncoming ? 'movement-in' : 'movement-out',
+            nurseName: record.nurseName || record.nurseEmail || '',
+            ranges: [],
+            days: 0,
+            hours: 0
+          });
+        }
+        const group = groups.get(key);
+        group.ranges.push(overlapRange);
+        const overlapDays = countDateRangeDays(overlapRange.start, overlapRange.end);
+        group.days += overlapDays;
+        group.hours += getDispatchHoursForDays(record, overlapDays);
+      });
+
+      return Array.from(groups.values()).map((group) => {
+        const dateText = formatRangeList(group.ranges);
+        const mainText = `${dateText} ${group.direction} ${group.nurseName}`;
+        return `
+          <div class="movement-entry ${group.className}">
+            <div>${escapeHtml(mainText)}</div>
+            <div class="cell-sub">${escapeHtml(formatDispatchStats(group.days, group.hours))}</div>
+            <div class="cell-sub">${escapeHtml(group.relatedText)}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function buildMovementEntryHtml(record, stationCode, rangeStart, rangeEnd) {
+      const overlapRange = getRecordOverlapRange(record, rangeStart, rangeEnd) || getRecordDateRange(record);
+      const overlapDays = countDateRangeDays(overlapRange.start, overlapRange.end);
+      const isIncoming = record.stationCode === stationCode;
+      const direction = isIncoming ? '+1 調入' : '-1 調出';
+      const relatedText = isIncoming
+        ? `原：${record.originalStationName || record.originalStationCode}`
+        : `至：${record.stationName || record.stationCode}`;
+      const className = isIncoming ? 'movement-in' : 'movement-out';
+      const mainText = `${formatDateRange(overlapRange.start, overlapRange.end)} ${direction} ${record.nurseName || record.nurseEmail}`;
+      return `
+        <div class="movement-entry ${className}">
+          <div>${escapeHtml(mainText)}</div>
+          <div class="cell-sub">${escapeHtml(formatDispatchStats(overlapDays, getDispatchHoursForDays(record, overlapDays)))}</div>
+          <div class="cell-sub">${escapeHtml(relatedText)}</div>
+        </div>
+      `;
+    }
+
+    function loadScheduleYear() {
+      const year = normalizeYear(el.scheduleYear.value);
+      state.scheduleYear = year;
+      el.filterDateFrom.value = `${year}-01-01`;
+      el.filterDateTo.value = `${year}-12-31`;
+      loadData(collectFilters());
+    }
+
+    function renderRecords() {
+      if (!state.records.length) {
+        el.recordsEmpty.classList.remove('hidden');
+        el.recordsTableWrap.classList.add('hidden');
+        el.recordsBody.innerHTML = '';
+        return;
+      }
+
+      el.recordsEmpty.classList.add('hidden');
+      el.recordsTableWrap.classList.remove('hidden');
+      el.recordsBody.innerHTML = state.records.map((record) => {
+        const temporaryInfo = getTemporaryDispatchInfo(record);
+        return `
+          <tr>
+            <td>
+              <div class="cell-main">${escapeHtml(formatDispatchDateRange(record))}</div>
+              <div class="cell-sub">${escapeHtml(record.updatedAt || '')}</div>
+            </td>
+            <td>
+              <div class="cell-main">${escapeHtml(record.stationName || record.stationCode)}</div>
+              <div class="cell-sub">${escapeHtml(record.stationCode)}</div>
+            </td>
+            <td>
+              <div class="cell-main">${escapeHtml(record.nurseName || record.nurseEmail)}</div>
+              <div class="cell-sub">${escapeHtml(record.nurseEmail)}</div>
+              <div class="cell-sub">${escapeHtml(record.assignmentKey)}</div>
+            </td>
+            <td>
+              ${temporaryInfo.isTemporary ? '<span class="temp-badge">臨時調配</span>' : '<span class="muted">-</span>'}
+              ${temporaryInfo.source ? `<div class="cell-sub">原：${escapeHtml(temporaryInfo.source)}</div>` : ''}
+              ${temporaryInfo.isTemporary ? `<div class="cell-sub">${escapeHtml(formatDispatchStats(getDispatchDays(record), getDispatchTotalHours(record)))}</div>` : ''}
+            </td>
+            <td>${escapeHtml(record.shiftName || '')}</td>
+            <td>${escapeHtml(formatTimeRange(record))}</td>
+            <td><strong>${escapeHtml(formatNumber(record.hours))}</strong></td>
+            <td>${escapeHtml(record.note || '')}</td>
+            <td>
+              <div class="actions">
+                <button class="btn btn-ghost" type="button" data-edit="${escapeHtml(record.id)}">編輯</button>
+                <button class="btn btn-danger" type="button" data-delete="${escapeHtml(record.id)}">刪除</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      el.recordsBody.querySelectorAll('[data-edit]').forEach((button) => {
+        button.addEventListener('click', () => editRecord(button.getAttribute('data-edit')));
+      });
+      el.recordsBody.querySelectorAll('[data-delete]').forEach((button) => {
+        button.addEventListener('click', () => deleteRecord(button.getAttribute('data-delete')));
+      });
+    }
+
+    async function saveDispatch(event) {
+      event.preventDefault();
+      if (state.isSaving) return;
+
+      const station = getStationByCode(el.stationSelect.value);
+      const nurse = getNursesForStation('').find((item) => item.assignmentKey === el.nurseSelect.value);
+
+      if (!station || !nurse) {
+        setStatus('請選擇有效的駐站與護理師。', 'error');
+        return;
+      }
+      if (!el.dispatchStartDate.value || !el.dispatchEndDate.value) {
+        setStatus('請選擇調派起日與迄日。', 'error');
+        return;
+      }
+      if (el.dispatchEndDate.value < el.dispatchStartDate.value) {
+        setStatus('調派迄日不可早於調派起日。', 'error');
+        return;
+      }
+
+      const payload = {
+        id: el.recordId.value,
+        startDate: el.dispatchStartDate.value,
+        endDate: el.dispatchEndDate.value,
+        workDate: el.dispatchStartDate.value,
+        stationCode: station.code,
+        assignmentKey: nurse.assignmentKey,
+        shiftName: el.shiftName.value,
+        startTime: el.startTime.value,
+        endTime: el.endTime.value,
+        hours: el.hoursInput.value,
+        note: el.noteInput.value,
+        testMode: state.testMode,
+        filters: collectFilters()
+      };
+
+      state.isSaving = true;
+      el.saveBtn.disabled = true;
+      setStatus('儲存中...');
+
+      try {
+        const response = await callServer('saveWorkHourDispatch', payload);
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '儲存失敗。');
+        }
+        applyData(response);
+        resetForm();
+        setStatus('工時調派已儲存。', 'success');
+      } catch (error) {
+        setStatus(error && error.message ? error.message : '儲存失敗。', 'error');
+      } finally {
+        state.isSaving = false;
+        el.saveBtn.disabled = false;
+      }
+    }
+
+    function editRecord(id) {
+      const record = state.records.find((item) => item.id === id);
+      if (!record) return;
+
+      el.recordId.value = record.id;
+      el.formTitle.textContent = '編輯工時調派';
+      el.cancelEditBtn.classList.remove('hidden');
+      el.dispatchStartDate.value = getRecordStartDate(record);
+      el.dispatchEndDate.value = getRecordEndDate(record);
+      el.nurseOriginStation.value = record.originalStationCode || '';
+      el.stationSelect.value = record.stationCode;
+      renderFormNurseOptions();
+      el.nurseSelect.value = record.assignmentKey;
+      el.shiftName.value = record.shiftName || state.shiftOptions[0] || '日班';
+      el.startTime.value = record.startTime || '';
+      el.endTime.value = record.endTime || '';
+      el.hoursInput.value = Number(record.hours || 0);
+      el.noteInput.value = record.note || '';
+      setStatus('');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function deleteRecord(id) {
+      const record = state.records.find((item) => item.id === id);
+      if (!record) return;
+      const confirmed = window.confirm(`確定刪除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的工時調派？`);
+      if (!confirmed) return;
+
+      setStatus('刪除中...');
+      try {
+        const response = await callServer('deleteWorkHourDispatch', {
+          id,
+          testMode: state.testMode,
+          filters: collectFilters()
+        });
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '刪除失敗。');
+        }
+        applyData(response);
+        resetForm();
+        setStatus('工時調派已刪除。', 'success');
+      } catch (error) {
+        setStatus(error && error.message ? error.message : '刪除失敗。', 'error');
+      }
+    }
+
+    function resetForm() {
+      el.recordId.value = '';
+      el.formTitle.textContent = '新增工時調派';
+      el.cancelEditBtn.classList.add('hidden');
+      el.dispatchForm.reset();
+      el.dispatchStartDate.value = getDefaultDispatchDate();
+      el.dispatchEndDate.value = el.dispatchStartDate.value;
+      el.nurseOriginStation.value = '';
+      if (state.stations[0]) el.stationSelect.value = state.stations[0].code;
+      renderFormNurseOptions();
+      if (state.shiftOptions[0]) el.shiftName.value = state.shiftOptions[0];
+      applyShiftDefaults(true);
+      setStatus('');
+    }
+
+    function collectFilters() {
+      return {
+        dateFrom: el.filterDateFrom.value,
+        dateTo: el.filterDateTo.value,
+        stationCode: el.filterStation.value,
+        nurseEmail: el.filterNurse.value,
+        testMode: state.testMode
+      };
+    }
+
+    function inferScheduleYear() {
+      const source = state.filters.dateFrom || state.filters.dateTo || el.scheduleYear.value;
+      const matched = String(source || '').match(/^(\d{4})/);
+      return matched ? Number(matched[1]) : (state.scheduleYear || new Date().getFullYear());
+    }
+
+    function normalizeYear(value) {
+      const year = Number(value || new Date().getFullYear());
+      if (!Number.isInteger(year) || year < 2020 || year > 2100) {
+        return new Date().getFullYear();
+      }
+      return year;
+    }
+
+    function buildYearWeeks(year) {
+      const endOfYear = `${year}-12-31`;
+      const weeks = [];
+      let cursor = `${year}-01-01`;
+
+      while (cursor <= endOfYear) {
+        const day = new Date(`${cursor}T00:00:00+08:00`).getDay();
+        const daysToSunday = (7 - day) % 7;
+        let weekEnd = addDaysToDateString(cursor, daysToSunday);
+        if (weekEnd > endOfYear) weekEnd = endOfYear;
+
+        weeks.push({
+          index: weeks.length + 1,
+          start: cursor,
+          end: weekEnd
+        });
+
+        cursor = addDaysToDateString(weekEnd, 1);
+      }
+
+      return weeks;
+    }
+
+    function buildVisibleYearWeeks(year) {
+      const weeks = buildYearWeeks(year);
+      const currentYear = new Date().getFullYear();
+      if (Number(year) !== currentYear) return weeks;
+
+      const today = getTodayString();
+      return weeks.filter((week) => week.end >= today);
+    }
+
+    function buildYearMonths(year) {
+      const labels = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
+      return labels.map((label, index) => {
+        const month = index + 1;
+        const start = `${year}-${String(month).padStart(2, '0')}-01`;
+        const endDate = new Date(year, month, 0);
+        const end = formatDateFromDate(endDate);
+        return {
+          index: month,
+          label,
+          start,
+          end
+        };
+      });
+    }
+
+    function formatWeekRange(week) {
+      return `${formatMonthDay(week.start)}-${formatMonthDay(week.end)}`;
+    }
+
+    function getRecordStartDate(record) {
+      return String(record && (record.startDate || record.workDate) || '').trim();
+    }
+
+    function getRecordEndDate(record) {
+      return String(record && (record.endDate || record.workDate || record.startDate) || '').trim();
+    }
+
+    function getRecordDateRange(record) {
+      return {
+        start: getRecordStartDate(record),
+        end: getRecordEndDate(record)
+      };
+    }
+
+    function getRecordOverlapRange(record, rangeStart, rangeEnd) {
+      const recordStart = getRecordStartDate(record);
+      const recordEnd = getRecordEndDate(record);
+      if (!recordStart || !recordEnd || !rangeStart || !rangeEnd) return null;
+      const start = recordStart > rangeStart ? recordStart : rangeStart;
+      const end = recordEnd < rangeEnd ? recordEnd : rangeEnd;
+      return start <= end ? { start, end } : null;
+    }
+
+    function recordOverlapsRange(record, rangeStart, rangeEnd) {
+      const recordStart = getRecordStartDate(record);
+      const recordEnd = getRecordEndDate(record);
+      if (!recordStart || !recordEnd || !rangeStart || !rangeEnd) return false;
+      return recordStart <= rangeEnd && recordEnd >= rangeStart;
+    }
+
+    function formatDispatchDateRange(record) {
+      const range = getRecordDateRange(record);
+      return formatDateRange(range.start, range.end);
+    }
+
+    function formatRangeList(ranges) {
+      const map = new Map();
+      (ranges || []).forEach((range) => {
+        const start = String(range && range.start || '').trim();
+        const end = String(range && range.end || start).trim();
+        if (!start) return;
+        map.set(`${start}:${end}`, { start, end });
+      });
+      return Array.from(map.values())
+        .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+        .map((range) => formatDateRange(range.start, range.end))
+        .join('、');
+    }
+
+    function getDispatchDays(record) {
+      return countDateRangeDays(getRecordStartDate(record), getRecordEndDate(record));
+    }
+
+    function countDateRangeDays(startDate, endDate) {
+      if (!startDate || !endDate) return 0;
+      return Math.max(1, daysBetween(startDate, endDate) + 1);
+    }
+
+    function getDispatchHoursForDays(record, days) {
+      const hours = Number(record && record.hours || 0);
+      const normalizedDays = Number(days || 0);
+      if (!Number.isFinite(hours) || !Number.isFinite(normalizedDays)) return 0;
+      return Math.round(hours * normalizedDays * 100) / 100;
+    }
+
+    function getDispatchTotalHours(record) {
+      return getDispatchHoursForDays(record, getDispatchDays(record));
+    }
+
+    function formatDispatchStats(days, hours) {
+      return `${formatNumber(days)}天｜${formatNumber(hours)}h`;
+    }
+
+    function getRecordYear(record) {
+      return Number(getRecordStartDate(record).slice(0, 4));
+    }
+
+    function getRecordMonth(record) {
+      return Number(getRecordStartDate(record).slice(5, 7));
+    }
+
+    function compressDateRanges(dates) {
+      const uniqueDates = Array.from(new Set(dates || []))
+        .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')))
+        .sort();
+      const ranges = [];
+      let start = '';
+      let previous = '';
+
+      uniqueDates.forEach((date) => {
+        if (!start) {
+          start = date;
+          previous = date;
+          return;
+        }
+        if (daysBetween(previous, date) === 1) {
+          previous = date;
+          return;
+        }
+        ranges.push(formatDateRange(start, previous));
+        start = date;
+        previous = date;
+      });
+      if (start) ranges.push(formatDateRange(start, previous));
+      return ranges;
+    }
+
+    function formatDateRange(startDate, endDate) {
+      const start = formatMonthDay(startDate);
+      const end = formatMonthDay(endDate);
+      if (startDate === endDate) return start;
+      if (String(startDate).slice(0, 7) === String(endDate).slice(0, 7)) {
+        return `${start}-${String(endDate).slice(8, 10).replace(/^0/, '')}`;
+      }
+      return `${start}-${end}`;
+    }
+
+    function formatMonthDay(date) {
+      const month = String(date || '').slice(5, 7).replace(/^0/, '');
+      const day = String(date || '').slice(8, 10).replace(/^0/, '');
+      return `${month}/${day}`;
+    }
+
+    function daysBetween(left, right) {
+      const leftTime = Date.parse(`${left}T00:00:00+08:00`);
+      const rightTime = Date.parse(`${right}T00:00:00+08:00`);
+      return Math.round((rightTime - leftTime) / 86400000);
+    }
+
+    function addDaysToDateString(dateString, days) {
+      const date = new Date(`${dateString}T00:00:00+08:00`);
+      date.setDate(date.getDate() + Number(days || 0));
+      return formatDateFromDate(date);
+    }
+
+    function formatDateFromDate(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    function hashToTone(value) {
+      let hash = 0;
+      String(value || '').split('').forEach((char) => {
+        hash = ((hash << 5) - hash) + char.charCodeAt(0);
+        hash |= 0;
+      });
+      return Math.abs(hash) % 6;
+    }
+
+    function updateHoursFromTimes() {
+      if (!el.startTime.value || !el.endTime.value) return;
+      const start = timeToMinutes(el.startTime.value);
+      let end = timeToMinutes(el.endTime.value);
+      if (end <= start) end += 24 * 60;
+      const hours = Math.round(((end - start) / 60) * 100) / 100;
+      if (Number.isFinite(hours) && hours > 0) {
+        el.hoursInput.value = hours;
+      }
+    }
+
+    function applyShiftDefaults(force) {
+      if (!el.shiftName || el.shiftName.value !== '日班') return;
+      const shouldFillTime = force || (!el.startTime.value && !el.endTime.value);
+      if (shouldFillTime) {
+        el.startTime.value = '07:30';
+        el.endTime.value = '16:30';
+      }
+      if (force || !el.hoursInput.value) {
+        el.hoursInput.value = '9';
+      } else {
+        updateHoursFromTimes();
+      }
+    }
+
+    function getNursesForStation(stationCode) {
+      const map = new Map();
+      (state.nurses || []).forEach((nurse) => {
+        if (stationCode && nurse.orgCode !== stationCode) return;
+        if (!map.has(nurse.assignmentKey)) map.set(nurse.assignmentKey, nurse);
+      });
+      return Array.from(map.values()).sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email), 'zh-Hant'));
+    }
+
+    function getTemporaryDispatchInfo(record) {
+      const originalCode = String(record && record.originalStationCode || '').trim();
+      const targetCode = String(record && record.stationCode || '').trim();
+      const source = String(record && (record.originalStationName || record.originalStationCode) || '').trim();
+      const isTemporary = Boolean(record && record.temporaryDispatchLabel)
+        || Boolean(originalCode && targetCode && originalCode !== targetCode);
+      return {
+        isTemporary,
+        source: isTemporary ? source : ''
+      };
+    }
+
+    function getStationByCode(code) {
+      return state.stations.find((station) => station.code === code) || null;
+    }
+
+    function callServer(functionName, payload) {
+      return new Promise((resolve, reject) => {
+        if (typeof google === 'undefined' || !google.script || !google.script.run) {
+          reject(new Error('此頁面需要部署在 Google Apps Script Web App。'));
+          return;
+        }
+
+        const runner = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler((error) => {
+            reject(new Error(error && error.message ? error.message : String(error || '伺服器呼叫失敗。')));
+          });
+        runner[functionName](payload);
+      });
+    }
+
+    function setPageLoading(isLoading) {
+      if (isLoading) {
+        el.loading.classList.remove('hidden');
+        el.loading.textContent = '正在讀取駐站與護理師資料...';
+      } else if (state.stations.length) {
+        el.loading.classList.add('hidden');
+      }
+      el.reloadBtn.disabled = isLoading;
+    }
+
+    function showLoadError(message) {
+      el.appMain.classList.add('hidden');
+      el.loading.classList.remove('hidden');
+      el.loading.textContent = message;
+      el.viewerName.textContent = '讀取失敗';
+      el.viewerEmail.textContent = '';
+    }
+
+    function setStatus(message, type) {
+      el.formStatus.textContent = message || '';
+      el.formStatus.className = `status${type ? ` ${type}` : ''}`;
+    }
+
+    function formatTimeRange(record) {
+      if (record.startTime && record.endTime) return `${record.startTime} 至 ${record.endTime}`;
+      if (record.startTime) return `${record.startTime} 起`;
+      return '';
+    }
+
+    function timeToMinutes(value) {
+      const parts = String(value || '').split(':').map(Number);
+      return parts[0] * 60 + parts[1];
+    }
+
+    function formatNumber(value) {
+      const numberValue = Number(value || 0);
+      if (!Number.isFinite(numberValue)) return '0';
+      return String(Math.round(numberValue * 100) / 100);
+    }
+
+    function getTodayString() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    function getDefaultDispatchDate() {
+      const today = getTodayString();
+      const dateFrom = String(state.filters && state.filters.dateFrom || '').trim();
+      const dateTo = String(state.filters && state.filters.dateTo || '').trim();
+
+      if (dateFrom && today < dateFrom) return dateFrom;
+      if (dateTo && today > dateTo) return dateTo;
+      return today;
+    }
+
+    function toCamel(id) {
+      return id.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+  </script>
+</body>
+</html>
