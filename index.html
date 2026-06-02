@@ -978,14 +978,14 @@
       const stationOptions = [
         '<option value="">全部駐站</option>',
         ...state.stations.map((station) => (
-          `<option value="${escapeHtml(station.code)}">${escapeHtml(station.name || station.code)} (${escapeHtml(station.code)})</option>`
+          `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
         ))
       ].join('');
       el.filterStation.innerHTML = stationOptions;
       el.filterStation.value = state.filters.stationCode || '';
 
       el.stationSelect.innerHTML = state.stations.map((station) => (
-        `<option value="${escapeHtml(station.code)}">${escapeHtml(station.name || station.code)} (${escapeHtml(station.code)})</option>`
+        `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
       )).join('');
       if (!el.stationSelect.value && state.stations[0]) {
         el.stationSelect.value = state.stations[0].code;
@@ -994,7 +994,7 @@
       el.nurseOriginStation.innerHTML = [
         '<option value="">全部原駐站</option>',
         ...state.stations.map((station) => (
-          `<option value="${escapeHtml(station.code)}">${escapeHtml(station.name || station.code)} (${escapeHtml(station.code)})</option>`
+          `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
         ))
       ].join('');
       el.nurseOriginStation.value = selectedOriginStation;
@@ -1006,7 +1006,7 @@
       el.filterNurse.innerHTML = [
         `<option value="">${stationCode ? '全部原駐站護理師' : '請先選擇駐站'}</option>`,
         ...nurses.map((nurse) => (
-          `<option value="${escapeHtml(nurse.email)}">${escapeHtml(nurse.name || nurse.email)}｜${escapeHtml(nurse.email)}｜${escapeHtml(nurse.orgName || nurse.orgCode)}</option>`
+          `<option value="${escapeHtml(nurse.email)}">${escapeHtml(getNurseOptionLabel(nurse))}</option>`
         ))
       ].join('');
       const filterNurseEmail = state.filters.nurseEmail || '';
@@ -1018,7 +1018,7 @@
       const nurses = getNursesForStation(el.nurseOriginStation.value || '');
       el.nurseSelect.innerHTML = nurses.length
         ? nurses.map((nurse) => (
-            `<option value="${escapeHtml(nurse.assignmentKey)}">${escapeHtml(nurse.name || nurse.email)}｜${escapeHtml(nurse.email)}｜${escapeHtml(nurse.orgName || nurse.orgCode)}</option>`
+            `<option value="${escapeHtml(nurse.assignmentKey)}">${escapeHtml(getNurseOptionLabel(nurse))}</option>`
           )).join('')
         : '<option value="">此原駐站沒有可調派的收案人員</option>';
       if (selectedAssignmentKey && nurses.some((nurse) => nurse.assignmentKey === selectedAssignmentKey)) {
@@ -1117,12 +1117,11 @@
 
     function buildScheduleStationRowHtml(station, cells) {
       const currentCount = getStationCountAtDate(station, getTodayString());
-      const displayName = station.scheduleLabel || station.name || station.code;
+      const displayName = station.scheduleLabel || getStationDisplayName(station);
       return `
         <tr>
           <td class="station-cell">
             <div class="cell-main">${escapeHtml(displayName)}（${escapeHtml(formatNumber(currentCount))}）</div>
-            <div class="cell-sub">${escapeHtml(station.code)}</div>
             <div class="cell-sub">原編制 ${escapeHtml(formatNumber(station.memberCount))} 人</div>
             <div class="cell-sub">即時在站 ${escapeHtml(formatNumber(currentCount))} 人</div>
           </td>
@@ -1285,8 +1284,8 @@
         const isIncoming = record.stationCode === stationCode;
         const direction = isIncoming ? '+1 調入' : '-1 調出';
         const relatedText = isIncoming
-          ? `原：${record.originalStationName || record.originalStationCode}`
-          : `至：${record.stationName || record.stationCode}`;
+          ? `原：${getRecordOriginalStationDisplayName(record)}`
+          : `至：${getRecordTargetStationDisplayName(record)}`;
         const key = [
           direction,
           record.assignmentKey || record.nurseEmail || '',
@@ -1330,8 +1329,8 @@
       const isIncoming = record.stationCode === stationCode;
       const direction = isIncoming ? '+1 調入' : '-1 調出';
       const relatedText = isIncoming
-        ? `原：${record.originalStationName || record.originalStationCode}`
-        : `至：${record.stationName || record.stationCode}`;
+        ? `原：${getRecordOriginalStationDisplayName(record)}`
+        : `至：${getRecordTargetStationDisplayName(record)}`;
       const className = isIncoming ? 'movement-in' : 'movement-out';
       const mainText = `${formatDateRange(overlapRange.start, overlapRange.end)} ${direction} ${record.nurseName || record.nurseEmail}`;
       return `
@@ -1370,13 +1369,11 @@
               <div class="cell-sub">${escapeHtml(record.updatedAt || '')}</div>
             </td>
             <td>
-              <div class="cell-main">${escapeHtml(record.stationName || record.stationCode)}</div>
-              <div class="cell-sub">${escapeHtml(record.stationCode)}</div>
+              <div class="cell-main">${escapeHtml(getRecordTargetStationDisplayName(record))}</div>
             </td>
             <td>
               <div class="cell-main">${escapeHtml(record.nurseName || record.nurseEmail)}</div>
               <div class="cell-sub">${escapeHtml(record.nurseEmail)}</div>
-              <div class="cell-sub">${escapeHtml(record.assignmentKey)}</div>
             </td>
             <td>
               ${temporaryInfo.isTemporary ? '<span class="temp-badge">臨時調配</span>' : '<span class="muted">-</span>'}
@@ -1787,7 +1784,7 @@
     function getTemporaryDispatchInfo(record) {
       const originalCode = String(record && record.originalStationCode || '').trim();
       const targetCode = String(record && record.stationCode || '').trim();
-      const source = String(record && (record.originalStationName || record.originalStationCode) || '').trim();
+      const source = getRecordOriginalStationDisplayName(record);
       const isTemporary = Boolean(record && record.temporaryDispatchLabel)
         || Boolean(originalCode && targetCode && originalCode !== targetCode);
       return {
@@ -1798,6 +1795,26 @@
 
     function getStationByCode(code) {
       return state.stations.find((station) => station.code === code) || null;
+    }
+
+    function getStationDisplayName(station) {
+      return String(station && station.name || '').trim() || '未命名駐站';
+    }
+
+    function getRecordTargetStationDisplayName(record) {
+      return String(record && record.stationName || '').trim() || '未命名駐站';
+    }
+
+    function getRecordOriginalStationDisplayName(record) {
+      return String(record && record.originalStationName || '').trim() || '未命名駐站';
+    }
+
+    function getNurseOptionLabel(nurse) {
+      return [
+        String(nurse && (nurse.name || nurse.email) || '').trim() || '未命名人員',
+        String(nurse && nurse.email || '').trim(),
+        String(nurse && nurse.orgName || '').trim() || '未命名原駐站'
+      ].filter(Boolean).join('｜');
     }
 
     function callServer(functionName, payload) {
