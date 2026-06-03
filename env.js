@@ -8,7 +8,7 @@ const ENV = {
   // 獨立資料來源中的人員職務配置分頁。優先用 gid，避免同名分頁或順序變動讀錯。
   DISPATCH_ASSIGNMENT_SHEET_GID: 184185852,
   // 測試模式只開放白名單或資料表職稱符合下列設定者。
-  TESTER_EMAILS: ["eric1207cvb@as.edu.tw"],
+  TESTER_EMAILS: ["eric1207cvb@as.edu.tw", "itsutaka@as.edu.tw"],
   TESTER_TITLES: ["系統測試人員", "測試人員"],
   // 開啟後，後端不修改正式主檔人員、組織與職務配置；臨時調配欄同步由下方設定獨立控制。
   MASTER_DATA_READ_ONLY: true,

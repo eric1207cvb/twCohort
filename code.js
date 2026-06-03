@@ -4,6 +4,8 @@ const APP_CONFIG = {
   orgSheetName: '組織架構樹',
   assignmentSheetName: '人員職務配置',
   stationCodePrefix: 'GRP-CO-',
+  externalStationCodePrefix: 'GRP-CO-EX-',
+  stationManagerTitle: '駐站管理員',
   storeKey: 'stationNurseWorkHours:v1',
   chunkSize: 8000,
   maxRecords: 3000,
@@ -12,7 +14,7 @@ const APP_CONFIG = {
   fullShiftBreakHours: 1,
   fullShiftBreakThresholdHours: 8,
   unavailableStatusKeywords: ['育嬰', '留停', '留職停薪', '停薪', '留職', '停職', '休職'],
-  shiftOptions: ['日班', '上午', '下午', '夜班', '支援', '其他']
+  shiftOptions: ['正常班', '行動收案']
 };
 
 const FIELD_ALIASES = {
@@ -93,7 +95,8 @@ function getDispatchAppData(payload) {
       scheduleRecords,
       currentRecords,
       filters,
-      shiftOptions: APP_CONFIG.shiftOptions.slice()
+      shiftOptions: APP_CONFIG.shiftOptions.slice(),
+      managerCandidates: buildStationManagerCandidates_(source)
     };
   } catch (error) {
     console.error('讀取工時調派資料失敗:', error);
@@ -111,6 +114,7 @@ function getDispatchAppData(payload) {
       currentRecords: [],
       filters: normalizeDispatchFilters_(payload),
       shiftOptions: APP_CONFIG.shiftOptions.slice(),
+      managerCandidates: [],
       message: error && error.message ? error.message : '無法讀取工時調派資料。'
     };
   }
@@ -138,6 +142,13 @@ function saveWorkHourDispatch(payload) {
     const existingIndex = normalized.id
       ? records.findIndex((record) => record.id === normalized.id && record.status === '有效')
       : -1;
+    if (normalized.id && existingIndex < 0) {
+      const inactiveRecord = records.find((record) => record.id === normalized.id);
+      if (inactiveRecord) {
+        throw new Error(buildDispatchDeletedConflictMessage_(inactiveRecord, '儲存', source));
+      }
+      throw new Error('找不到要編輯的調派紀錄。請先按「重新整理」查看最新調派內容。');
+    }
     assertNoOverlappingNurseDispatch_(normalized, records);
     const previousAssignmentKey = existingIndex >= 0 ? records[existingIndex].assignmentKey : '';
     const now = formatTimestamp_(new Date());
@@ -145,12 +156,14 @@ function saveWorkHourDispatch(payload) {
     if (existingIndex >= 0) {
       const existing = records[existingIndex];
       assertCanManageStation_(context, existing.stationCode);
+      assertDispatchRecordVersion_(existing, payload, '儲存', source);
       records.splice(existingIndex, 1, {
         ...existing,
         ...normalized,
         id: existing.id,
         createdAt: existing.createdAt,
         createdBy: existing.createdBy,
+        version: createDispatchRecordVersion_(),
         updatedAt: now,
         updatedBy: viewerEmail,
         status: '有效'
@@ -159,6 +172,7 @@ function saveWorkHourDispatch(payload) {
       records.unshift({
         ...normalized,
         id: Utilities.getUuid(),
+        version: createDispatchRecordVersion_(),
         createdAt: now,
         createdBy: viewerEmail,
         updatedAt: now,
@@ -178,6 +192,73 @@ function saveWorkHourDispatch(payload) {
     return {
       success: false,
       message: error && error.message ? error.message : '無法儲存工時調派。'
+    };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+function saveWorkHourDispatchBatch(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) {
+      throw new Error('無法辨識目前登入帳號。');
+    }
+
+    lock.waitLock(10000);
+    hasLock = true;
+
+    if (payload && payload.id) {
+      throw new Error('整個駐站調派只能用於新增，不可用於修改既有紀錄。');
+    }
+
+    const source = loadDispatchSource_();
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: Boolean(payload && payload.testMode)
+    });
+    const assignmentKeys = normalizeAssignmentKeys_(payload && payload.assignmentKeys);
+    if (!assignmentKeys.length) {
+      throw new Error('請選擇要批次調派的來源駐站人員。');
+    }
+
+    const normalizedRecords = assignmentKeys.map((assignmentKey) => normalizeWorkHourPayload_({
+      ...payload,
+      id: '',
+      assignmentKey
+    }, context, viewerEmail));
+    const records = getStoredDispatchRecords_();
+    const now = formatTimestamp_(new Date());
+    const pendingRecords = [];
+
+    normalizedRecords.forEach((normalized) => {
+      assertNoOverlappingNurseDispatch_(normalized, records.concat(pendingRecords));
+      pendingRecords.push({
+        ...normalized,
+        id: Utilities.getUuid(),
+        version: createDispatchRecordVersion_(),
+        createdAt: now,
+        createdBy: viewerEmail,
+        updatedAt: now,
+        updatedBy: viewerEmail,
+        status: '有效'
+      });
+    });
+
+    records.unshift(...pendingRecords);
+    saveStoredDispatchRecords_(records);
+    syncTemporaryDispatchColumn_(source, records, normalizedRecords.map((record) => record.assignmentKey));
+
+    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    response.createdCount = pendingRecords.length;
+    return response;
+  } catch (error) {
+    console.error('批次儲存工時調派失敗:', error);
+    return {
+      success: false,
+      message: error && error.message ? error.message : '無法批次儲存工時調派。'
     };
   } finally {
     if (hasLock) lock.releaseLock();
@@ -209,13 +290,19 @@ function deleteWorkHourDispatch(payload) {
     const records = getStoredDispatchRecords_();
     const targetIndex = records.findIndex((record) => record.id === id && record.status === '有效');
     if (targetIndex < 0) {
-      throw new Error('找不到要刪除的調派紀錄。');
+      const inactiveRecord = records.find((record) => record.id === id);
+      if (inactiveRecord) {
+        throw new Error(buildDispatchDeletedConflictMessage_(inactiveRecord, '刪除', source));
+      }
+      throw new Error('找不到要刪除的調派紀錄。請先按「重新整理」查看最新調派內容。');
     }
 
     assertCanManageStation_(context, records[targetIndex].stationCode);
+    assertDispatchRecordVersion_(records[targetIndex], payload, '刪除', source);
     records[targetIndex] = {
       ...records[targetIndex],
       status: '已刪除',
+      version: createDispatchRecordVersion_(),
       updatedAt: formatTimestamp_(new Date()),
       updatedBy: viewerEmail
     };
@@ -228,6 +315,86 @@ function deleteWorkHourDispatch(payload) {
     return {
       success: false,
       message: error && error.message ? error.message : '無法刪除工時調派。'
+    };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+function createStation(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) {
+      throw new Error('無法辨識目前登入帳號。');
+    }
+
+    lock.waitLock(10000);
+    hasLock = true;
+
+    const source = loadDispatchSource_();
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: Boolean(payload && payload.testMode)
+    });
+    assertCanCreateStation_(context);
+    const normalized = normalizeCreateStationPayload_(payload, source);
+    appendStationRecord_(source.orgSheet, normalized);
+    ensureStationManagerAssignment_(source.assignmentSheet, source.assignments, normalized);
+
+    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    response.createdStation = {
+      code: normalized.code,
+      name: normalized.alias || normalized.name,
+      isExternal: normalized.isExternal
+    };
+    return response;
+  } catch (error) {
+    console.error('新增駐站失敗:', error);
+    return {
+      success: false,
+      message: error && error.message ? error.message : '無法新增駐站。'
+    };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+function deleteStation(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) {
+      throw new Error('無法辨識目前登入帳號。');
+    }
+
+    lock.waitLock(10000);
+    hasLock = true;
+
+    const source = loadDispatchSource_();
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: Boolean(payload && payload.testMode)
+    });
+    const stationCode = normalizeOrgCode_(payload && payload.stationCode);
+    if (!stationCode) {
+      throw new Error('請選擇要刪除的駐站。');
+    }
+    assertCanManageStation_(context, stationCode);
+    assertCanDeleteStation_(source, stationCode);
+    deleteStationOrgRows_(source.orgSheet, stationCode);
+    deleteStationManagerAssignmentRows_(source.assignmentSheet, stationCode);
+
+    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    response.deletedStationCode = stationCode;
+    return response;
+  } catch (error) {
+    console.error('刪除駐站失敗:', error);
+    return {
+      success: false,
+      message: error && error.message ? error.message : '無法刪除駐站。'
     };
   } finally {
     if (hasLock) lock.releaseLock();
@@ -247,6 +414,7 @@ function loadDispatchSource_() {
 
   if (stations.length === 0) {
     return {
+      orgSheet,
       assignmentSheet,
       personnelByEmail,
       assignments,
@@ -255,6 +423,7 @@ function loadDispatchSource_() {
   }
 
   return {
+    orgSheet,
     assignmentSheet,
     personnelByEmail,
     assignments,
@@ -421,7 +590,8 @@ function readStationRecords_(sheet) {
       parentCode: normalizeOrgCode_(row[parentCodeIndex]),
       managerEmail: normalizeEmail_(row[managerEmailIndex]),
       managerName: String(row[managerNameIndex] || '').trim(),
-      isIsoCertified: String(row[isoIndex] || '').trim().toUpperCase() === 'V'
+      isIsoCertified: String(row[isoIndex] || '').trim().toUpperCase() === 'V',
+      isExternal: isExternalStationCodeOrType_(row[codeIndex], row[typeIndex])
     }))
     .filter((station) => station.code && isStationCode_(station.code));
 }
@@ -440,7 +610,8 @@ function deriveStationsFromAssignments_(assignments) {
           alias: '',
           managerEmail: assignment.managerEmail,
           managerName: assignment.managerName,
-          isIsoCertified: false
+          isIsoCertified: false,
+          isExternal: isExternalStationCodeOrType_(assignment.orgCode, '')
         });
       }
 
@@ -469,7 +640,8 @@ function mergeStationsWithAssignmentGroups_(orgStations, assignments) {
       name: assignmentStation.name || existing.name || assignmentStation.code,
       managerEmail: existing.managerEmail || assignmentStation.managerEmail || '',
       managerName: existing.managerName || assignmentStation.managerName || '',
-      isIsoCertified: Boolean(existing.isIsoCertified || assignmentStation.isIsoCertified)
+      isIsoCertified: Boolean(existing.isIsoCertified || assignmentStation.isIsoCertified),
+      isExternal: Boolean(existing.isExternal || assignmentStation.isExternal)
     });
   });
 
@@ -524,10 +696,11 @@ function buildDispatchContext_(source, viewerEmail, options) {
   const managedStations = Array.from(stationByCode.values())
     .filter((station) => testMode || managedStationCodes.has(station.code));
   const visibleStationCodes = new Set(managedStations.map((station) => station.code));
+  const canUseExternalSources = Boolean(testMode || managedStations.length);
   const visibleNurses = stationAssignments
     .filter((assignment) => (
       isNurseAssignment_(assignment)
-      && (testMode || visibleStationCodes.has(assignment.orgCode))
+      && (canUseExternalSources || visibleStationCodes.has(assignment.orgCode))
     ))
     .map((assignment) => {
       const station = stationByCode.get(assignment.orgCode) || {};
@@ -554,13 +727,16 @@ function buildDispatchContext_(source, viewerEmail, options) {
       name: String(viewerPerson.name || viewerAssignment.name || '').trim(),
       isStationManager: managedStations.length > 0,
       canUseTestMode,
+      canCreateStation: managedStations.length > 0 || canUseTestMode,
       testMode
     },
+    managedStationCodes,
     stations: managedStations
       .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code), 'zh-Hant'))
       .map((station) => ({
         code: station.code,
         name: station.name || station.code,
+        isExternal: Boolean(station.isExternal),
         managerEmail: normalizeEmail_(station.managerEmail),
         managerName: station.managerName || '',
         memberCount: Number(station.memberCount || 0),
@@ -619,6 +795,16 @@ function isStationManagerAssignment_(assignment) {
   ].includes(title);
 }
 
+function normalizeDispatchMode_(value) {
+  const normalized = String(value || '').trim();
+  if (normalized === '行動收案') return '行動收案';
+  return '正常班';
+}
+
+function isMobileCaseDispatch_(shiftName) {
+  return normalizeDispatchMode_(shiftName) === '行動收案';
+}
+
 function canUseTestMode_(viewerEmail, assignments) {
   const normalizedViewerEmail = normalizeEmail_(viewerEmail);
   if (!normalizedViewerEmail) return false;
@@ -643,12 +829,253 @@ function getTesterTitles_() {
   return ENV.TESTER_TITLES.map((title) => String(title || '').trim()).filter(Boolean);
 }
 
+function buildStationManagerCandidates_(source) {
+  const candidateMap = new Map();
+
+  (source && Array.isArray(source.assignments) ? source.assignments : []).forEach((assignment) => {
+    if (!assignment || !assignment.email || !isStrictStationManagerAssignment_(assignment)) return;
+    const person = source && source.personnelByEmail
+      ? source.personnelByEmail.get(assignment.email)
+      : null;
+    const existing = candidateMap.get(assignment.email);
+    const status = String((person && person.status) || assignment.status || '').trim();
+    if (isUnavailableStatus_(status)) return;
+
+    candidateMap.set(assignment.email, {
+      email: assignment.email,
+      name: String((person && person.name) || assignment.name || assignment.email).trim(),
+      status,
+      title: APP_CONFIG.stationManagerTitle,
+      orgCodes: mergeUniqueValues_(existing && existing.orgCodes, assignment.orgCode),
+      orgNames: mergeUniqueValues_(existing && existing.orgNames, assignment.orgName)
+    });
+  });
+
+  return Array.from(candidateMap.values())
+    .filter((person) => person.email)
+    .sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email), 'zh-Hant'));
+}
+
+function isStrictStationManagerAssignment_(assignment) {
+  return String(assignment && assignment.title || '').trim() === APP_CONFIG.stationManagerTitle;
+}
+
+function mergeUniqueValues_(values, nextValue) {
+  const nextValues = Array.isArray(values) ? values.slice() : [];
+  const normalizedNextValue = String(nextValue || '').trim();
+  if (normalizedNextValue && !nextValues.includes(normalizedNextValue)) {
+    nextValues.push(normalizedNextValue);
+  }
+  return nextValues;
+}
+
+function assertCanCreateStation_(context) {
+  const canCreate = Boolean(context && context.viewer && context.viewer.canCreateStation);
+  if (!canCreate) {
+    throw new Error('您沒有新增駐站的權限。');
+  }
+}
+
 function assertCanManageStation_(context, stationCode) {
   const normalizedStationCode = normalizeOrgCode_(stationCode);
   const canManage = context.stations.some((station) => station.code === normalizedStationCode);
   if (!canManage) {
     throw new Error('您沒有管理此駐站工時調派的權限。');
   }
+}
+
+function normalizeCreateStationPayload_(payload, source) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('新增駐站資料格式錯誤。');
+  }
+  if (!source || !source.orgSheet) {
+    throw new Error('找不到組織架構樹工作表，無法新增駐站。');
+  }
+
+  const stationType = String(payload.stationType || 'general').trim() === 'external' ? 'external' : 'general';
+  const isExternal = stationType === 'external';
+  const suffix = normalizeStationCodeSuffix_(payload.codeSuffix, isExternal);
+  const prefix = isExternal ? APP_CONFIG.externalStationCodePrefix : APP_CONFIG.stationCodePrefix;
+  const code = `${prefix}${suffix}`;
+
+  if ((source.stations || []).some((station) => normalizeOrgCode_(station.code) === code)) {
+    throw new Error(`駐站代碼 ${code} 已存在。`);
+  }
+
+  const name = normalizeShortText_(payload.name, '駐站中文名稱', 80);
+  if (!name) {
+    throw new Error('請輸入駐站中文名稱。');
+  }
+  const alias = normalizeShortText_(payload.alias || '', '駐站別名', 40);
+  const managerEmail = normalizeEmail_(payload.managerEmail);
+  if (!managerEmail) {
+    throw new Error('請選擇駐站管理員。');
+  }
+
+  const candidates = buildStationManagerCandidates_(source);
+  const manager = candidates.find((person) => person.email === managerEmail);
+  if (!manager) {
+    throw new Error('找不到職稱為「駐站管理員」的人選，請先確認人員職務配置表。');
+  }
+
+  return {
+    stationType,
+    isExternal,
+    typeLabel: isExternal ? '委外駐站' : '一般駐站',
+    code,
+    name,
+    alias,
+    managerEmail,
+    managerName: manager.name || manager.email,
+    isIsoCertified: Boolean(payload.isIsoCertified)
+  };
+}
+
+function normalizeStationCodeSuffix_(value, isExternal) {
+  let suffix = String(value || '').trim().toUpperCase();
+  suffix = suffix
+    .replace(new RegExp(`^${escapeRegExp_(APP_CONFIG.externalStationCodePrefix)}`), '')
+    .replace(new RegExp(`^${escapeRegExp_(APP_CONFIG.stationCodePrefix)}`), '');
+  if (!suffix) {
+    throw new Error('請輸入英文尾碼。');
+  }
+  if (isExternal && suffix.indexOf('EX-') === 0) {
+    suffix = suffix.slice(3);
+  }
+  if (!/^[A-Z0-9][A-Z0-9-]{0,23}$/.test(suffix)) {
+    throw new Error('英文尾碼只能使用大寫英文、數字與連字號，長度最多 24 碼。');
+  }
+  if (!isExternal && suffix.indexOf('EX-') === 0) {
+    throw new Error('一般駐站英文尾碼不可用 EX- 開頭，請切換為委外駐站。');
+  }
+  return suffix;
+}
+
+function appendStationRecord_(sheet, station) {
+  const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0];
+  const columnCount = Math.max(sheet.getLastColumn(), 9);
+  const row = new Array(columnCount).fill('');
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgType, 0)] = station.typeLabel;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.level, 1)] = getEnvString_('DISPATCH_STATION_LEVEL', '3');
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgCode, 2)] = station.code;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgName, 3)] = station.name;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.alias, 4)] = station.alias;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.parentCode, 5)] = getEnvString_('DISPATCH_STATION_PARENT_CODE', '');
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerEmail, 6)] = station.managerEmail;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerName, 7)] = station.managerName;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.iso, 8)] = station.isIsoCertified ? 'V' : '';
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+}
+
+function ensureStationManagerAssignment_(sheet, assignments, station) {
+  const hasManagerAssignment = (Array.isArray(assignments) ? assignments : []).some((assignment) => (
+    normalizeEmail_(assignment.email) === station.managerEmail
+    && normalizeOrgCode_(assignment.orgCode) === station.code
+    && isStationManagerAssignment_(assignment)
+  ));
+  if (hasManagerAssignment) return;
+
+  const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0];
+  const columnCount = Math.max(sheet.getLastColumn(), 9);
+  const row = new Array(columnCount).fill('');
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.email, 0)] = station.managerEmail;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.name, 1)] = station.managerName;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgCode, 2)] = station.code;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgName, 3)] = station.alias || station.name;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.title, 4)] = APP_CONFIG.stationManagerTitle;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerEmail, 5)] = station.managerEmail;
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerName, 6)] = station.managerName;
+  const statusIndex = findHeaderIndex_(headers, FIELD_ALIASES.status);
+  if (statusIndex >= 0) row[statusIndex] = '在職';
+  const temporaryDispatchIndex = findHeaderIndex_(headers, FIELD_ALIASES.temporaryDispatch);
+  if (temporaryDispatchIndex >= 0) row[temporaryDispatchIndex] = '';
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+}
+
+function assertCanDeleteStation_(source, stationCode) {
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  const activeRecords = getStoredDispatchRecords_()
+    .filter((record) => (
+      record.status === '有效'
+      && (record.stationCode === normalizedStationCode || record.originalStationCode === normalizedStationCode)
+    ));
+  if (activeRecords.length) {
+    throw new Error('此駐站已有有效調派紀錄，請先刪除或調整相關工時調派後再刪除駐站。');
+  }
+
+  const nurseAssignments = (source && Array.isArray(source.assignments) ? source.assignments : [])
+    .filter((assignment) => (
+      assignment.orgCode === normalizedStationCode
+      && isNurseAssignment_(assignment)
+    ));
+  if (nurseAssignments.length) {
+    throw new Error('此駐站仍有人員配置，不可直接刪除。請先移除人員職務配置。');
+  }
+}
+
+function deleteStationOrgRows_(sheet, stationCode) {
+  if (!sheet) {
+    throw new Error('找不到組織架構樹工作表，無法刪除駐站。');
+  }
+  const rowIndexes = findRowsByOrgCode_(sheet, stationCode);
+  if (!rowIndexes.length) {
+    throw new Error('找不到組織架構樹中的駐站列，無法刪除。');
+  }
+  deleteRowsDescending_(sheet, rowIndexes);
+}
+
+function deleteStationManagerAssignmentRows_(sheet, stationCode) {
+  if (!sheet) return;
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return;
+
+  const headers = values[0];
+  const orgCodeIndex = findHeaderIndex_(headers, FIELD_ALIASES.orgCode, 2);
+  const titleIndex = findHeaderIndex_(headers, FIELD_ALIASES.title, 4);
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  const rowIndexes = [];
+
+  values.slice(1).forEach((row, index) => {
+    const orgCode = normalizeOrgCode_(row[orgCodeIndex]);
+    const title = String(row[titleIndex] || '').trim();
+    if (orgCode === normalizedStationCode && isStationManagerAssignment_({ title })) {
+      rowIndexes.push(index + 2);
+    }
+  });
+
+  deleteRowsDescending_(sheet, rowIndexes);
+}
+
+function findRowsByOrgCode_(sheet, stationCode) {
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return [];
+
+  const headers = values[0];
+  const orgCodeIndex = findHeaderIndex_(headers, FIELD_ALIASES.orgCode, 2);
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  const rowIndexes = [];
+
+  values.slice(1).forEach((row, index) => {
+    if (normalizeOrgCode_(row[orgCodeIndex]) === normalizedStationCode) {
+      rowIndexes.push(index + 2);
+    }
+  });
+  return rowIndexes;
+}
+
+function deleteRowsDescending_(sheet, rowIndexes) {
+  (Array.isArray(rowIndexes) ? rowIndexes : [])
+    .slice()
+    .sort((a, b) => b - a)
+    .forEach((rowIndex) => sheet.deleteRow(rowIndex));
+}
+
+function getWritableColumnIndex_(headers, aliases, fallbackIndex) {
+  const index = findHeaderIndex_(headers, aliases, fallbackIndex);
+  if (index < 0) {
+    throw new Error(`找不到必要欄位：${aliases[0]}`);
+  }
+  return index;
 }
 
 function normalizeWorkHourPayload_(payload, context, viewerEmail) {
@@ -667,6 +1094,15 @@ function normalizeWorkHourPayload_(payload, context, viewerEmail) {
   if (!station) {
     throw new Error('只能調派自己管理範圍內的駐站。');
   }
+  const shiftName = normalizeDispatchMode_(payload.shiftName || APP_CONFIG.shiftOptions[0]);
+  const isMobileCaseDispatch = isMobileCaseDispatch_(shiftName);
+  const isExternalTarget = isExternalStation_(station);
+  if (isExternalTarget) {
+    assertSundayToThursdayDispatchDateRange_(startDate, endDate, '委外駐站');
+  }
+  if (isMobileCaseDispatch) {
+    assertSundayToThursdayDispatchDateRange_(startDate, endDate, '行動收案');
+  }
 
   const assignmentKey = String(payload.assignmentKey || '').trim();
   const member = (context.nurses || []).find((item) => item.assignmentKey === assignmentKey);
@@ -676,11 +1112,14 @@ function normalizeWorkHourPayload_(payload, context, viewerEmail) {
   if (member.isUnavailable) {
     throw new Error(`${member.name || member.email} 目前狀態為「${member.status || '不可調配'}」，不得調派。`);
   }
+  const isTestMode = Boolean(context && context.viewer && context.viewer.testMode);
+  if (!isTestMode && !isExternalTarget && !isMobileCaseDispatch && context.managedStationCodes && !context.managedStationCodes.has(member.orgCode)) {
+    throw new Error('正常班只能調派自己管理範圍內的護理師。');
+  }
 
   const startTime = normalizeTime_(payload.startTime);
   const endTime = normalizeTime_(payload.endTime);
   const hours = normalizeHours_(payload.hours, startTime, endTime);
-  const shiftName = normalizeShortText_(payload.shiftName || '日班', '班別', 30);
   const note = normalizeShortText_(payload.note || '', '備註', 300);
   const originalStationCode = normalizeOrgCode_(member.orgCode);
   const originalStationName = String(member.orgName || originalStationCode).trim();
@@ -711,6 +1150,19 @@ function normalizeWorkHourPayload_(payload, context, viewerEmail) {
     note,
     updatedBy: viewerEmail
   };
+}
+
+function assertSundayToThursdayDispatchDateRange_(startDate, endDate, label) {
+  const blockedDates = [];
+  let cursor = startDate;
+  while (cursor <= endDate) {
+    const day = new Date(`${cursor}T00:00:00+08:00`).getDay();
+    if (day === 5 || day === 6) blockedDates.push(cursor);
+    cursor = addDays_(cursor, 1);
+  }
+  if (blockedDates.length) {
+    throw new Error(`${label || '此模式'}僅可安排週日到週四，請移除週五或週六日期：${blockedDates.join('、')}`);
+  }
 }
 
 function normalizeDispatchFilters_(payload) {
@@ -784,7 +1236,7 @@ function assertNoOverlappingNurseDispatch_(target, records) {
   if (!conflict) return;
 
   throw new Error([
-    '同一位護理師在重疊期間不可同時調派到不同駐站。',
+    `同一位護理師在重疊期間不可重複調派：${target.nurseName || target.nurseEmail || '未命名人員'}。`,
     `既有調派：${formatDispatchDateRange_(conflict.startDate, conflict.endDate)} ${conflict.stationName || conflict.stationCode}`,
     `本次調派：${formatDispatchDateRange_(target.startDate, target.endDate)} ${target.stationName || target.stationCode}`
   ].join('\n'));
@@ -797,6 +1249,81 @@ function dateRangesOverlap_(leftStart, leftEnd, rightStart, rightEnd) {
   const normalizedRightEnd = String(rightEnd || rightStart || '').trim();
   if (!normalizedLeftStart || !normalizedLeftEnd || !normalizedRightStart || !normalizedRightEnd) return false;
   return normalizedLeftStart <= normalizedRightEnd && normalizedLeftEnd >= normalizedRightStart;
+}
+
+function assertDispatchRecordVersion_(record, payload, actionLabel, source) {
+  const clientVersion = String(payload && payload.recordVersion || '').trim();
+  const serverVersion = String(record && record.version || '').trim();
+  if (!serverVersion || clientVersion === serverVersion) return;
+  if (!clientVersion) {
+    throw new Error(buildMissingDispatchVersionMessage_(record, actionLabel));
+  }
+
+  throw new Error(buildDispatchVersionConflictMessage_(record, actionLabel, source));
+}
+
+function buildMissingDispatchVersionMessage_(record, actionLabel) {
+  const rangeText = formatDispatchDateRange_(record.startDate, record.endDate);
+  const nurseText = record.nurseName || record.nurseEmail || '這位護理師';
+  const stationText = record.stationName || record.stationCode || '這個駐站';
+
+  return [
+    `目前畫面上的 ${rangeText} ${nurseText} 到 ${stationText} 調派資料不是最新版本。`,
+    `為避免覆蓋其他管理者可能已調整的班表，系統未執行本次${actionLabel}。`,
+    '請先按「重新整理」查看最新調派內容，再決定是否重新編輯。'
+  ].join('\n');
+}
+
+function buildDispatchVersionConflictMessage_(record, actionLabel, source) {
+  const operator = getDispatchOperatorDisplay_(record, source);
+  const updatedAt = String(record.updatedAt || '').trim() || '剛剛';
+  const rangeText = formatDispatchDateRange_(record.startDate, record.endDate);
+  const nurseText = record.nurseName || record.nurseEmail || '這位護理師';
+  const stationText = record.stationName || record.stationCode || '這個駐站';
+
+  return [
+    `這筆 ${rangeText} ${nurseText} 到 ${stationText} 的調派，已由 ${operator} 於 ${updatedAt} 更新。`,
+    `為避免覆蓋其他管理者剛調整的班表，系統未執行本次${actionLabel}。`,
+    '請先按「重新整理」查看最新調派內容，再決定是否重新編輯。'
+  ].join('\n');
+}
+
+function buildDispatchDeletedConflictMessage_(record, actionLabel, source) {
+  const operator = getDispatchOperatorDisplay_(record, source);
+  const updatedAt = String(record.updatedAt || '').trim() || '剛剛';
+  const rangeText = formatDispatchDateRange_(record.startDate, record.endDate);
+  const nurseText = record.nurseName || record.nurseEmail || '這位護理師';
+  const stationText = record.stationName || record.stationCode || '這個駐站';
+
+  return [
+    `這筆 ${rangeText} ${nurseText} 到 ${stationText} 的調派，已由 ${operator} 於 ${updatedAt} 刪除。`,
+    `為避免把已取消的班表重新寫入，系統未執行本次${actionLabel}。`,
+    '請先按「重新整理」查看最新調派內容，再決定是否需要新增一筆調派。'
+  ].join('\n');
+}
+
+function getDispatchOperatorDisplay_(record, source) {
+  const email = normalizeEmail_(record && record.updatedBy);
+  const person = source && source.personnelByEmail && email
+    ? source.personnelByEmail.get(email)
+    : null;
+  const name = String(person && person.name || '').trim();
+  if (name && email) return `${name}（${email}）`;
+  if (name) return name;
+  return email || '其他管理者';
+}
+
+function createDispatchRecordVersion_() {
+  return Utilities.getUuid();
+}
+
+function buildLegacyDispatchRecordVersion_(record) {
+  return [
+    record && record.id,
+    record && (record.updatedAt || record.createdAt),
+    record && (record.updatedBy || record.createdBy),
+    record && record.status
+  ].map((value) => String(value || '').trim()).join('|');
 }
 
 function syncTemporaryDispatchColumn_(source, records, assignmentKeys) {
@@ -896,6 +1423,7 @@ function normalizeStoredDispatchRecord_(record) {
 
   return {
     id: String(record.id || '').trim(),
+    version: String(record.version || buildLegacyDispatchRecordVersion_(record)).trim(),
     workDate: startDate,
     startDate,
     endDate,
@@ -910,7 +1438,7 @@ function normalizeStoredDispatchRecord_(record) {
     temporaryDispatchLabel: String(record.temporaryDispatchLabel || '').trim(),
     dispatchDays,
     dispatchTotalHours: calculateDispatchTotalHours_(hours, dispatchDays),
-    shiftName: String(record.shiftName || '日班').trim(),
+    shiftName: normalizeDispatchMode_(record.shiftName || APP_CONFIG.shiftOptions[0]),
     startTime,
     endTime,
     hours,
@@ -999,10 +1527,35 @@ function normalizeOrgCode_(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function normalizeAssignmentKeys_(values) {
+  const rawValues = Array.isArray(values) ? values : [values];
+  return Array.from(new Set(rawValues
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)));
+}
+
 function isStationCode_(value) {
   const normalized = normalizeOrgCode_(value);
   if (!normalized) return false;
   return normalized.startsWith(APP_CONFIG.stationCodePrefix);
+}
+
+function isExternalStation_(station) {
+  return Boolean(station && (
+    station.isExternal
+    || isExternalStationCodeOrType_(station.code, station.type)
+  ));
+}
+
+function isExternalStationCodeOrType_(code, type) {
+  const normalizedCode = normalizeOrgCode_(code);
+  const normalizedType = String(type || '').trim();
+  return normalizedCode.startsWith(APP_CONFIG.externalStationCodePrefix)
+    || normalizedType.indexOf('委外') >= 0;
+}
+
+function escapeRegExp_(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeDate_(value, label) {
