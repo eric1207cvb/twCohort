@@ -1033,9 +1033,7 @@
     }
 
     .movement-group-item + .movement-group-item {
-      border-top: 1px solid rgba(15, 23, 42, 0.1);
       margin-top: 5px;
-      padding-top: 5px;
     }
 
     .movement-in {
@@ -1056,6 +1054,38 @@
       color: #991b1b;
       word-break: break-word;
     }
+
+    .movement-station-group.movement-in {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+    }
+
+    .movement-task {
+      border: 1px solid rgba(15, 23, 42, 0.16);
+      border-left-width: 4px;
+      border-radius: 5px;
+      padding: 5px 6px;
+      color: var(--text);
+      box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+    }
+
+    .movement-task.movement-in .movement-entry-text {
+      color: #115e59;
+    }
+
+    .movement-task.movement-out .movement-entry-text {
+      color: #991b1b;
+    }
+
+    .movement-task-tone-0 { background: #ecfdf5; border-color: #0f766e; }
+    .movement-task-tone-1 { background: #eff6ff; border-color: #2563eb; }
+    .movement-task-tone-2 { background: #f5f3ff; border-color: #7c3aed; }
+    .movement-task-tone-3 { background: #fdf2f8; border-color: #db2777; }
+    .movement-task-tone-4 { background: #fff7ed; border-color: #ea580c; }
+    .movement-task-tone-5 { background: #f0fdfa; border-color: #0891b2; }
+    .movement-task-tone-6 { background: #fefce8; border-color: #ca8a04; }
+    .movement-task-tone-7 { background: #fef2f2; border-color: #dc2626; }
 
     .movement-entry-row {
       display: flex;
@@ -1750,6 +1780,7 @@
     const EXTERNAL_STATION_CODE_PREFIX = 'GRP-CO-EX-';
     const RECORDS_AUTO_REFRESH_MS = 45000;
     const STATION_COLOR_CLASS_COUNT = 22;
+    const MOVEMENT_TASK_TONE_COUNT = 8;
 
     // 北到南排序，月曆、駐站下拉與護理師清單共用。
     const SCHEDULE_STATION_RULES = [
@@ -3702,6 +3733,8 @@
         const sourceStationCode = record.originalStationCode || '';
         const sourceStationName = getRecordOriginalStationDisplayName(record);
         const targetStationName = getRecordTargetStationDisplayName(record);
+        const recordStartDate = getRecordStartDate(record);
+        const recordEndDate = getRecordEndDate(record);
         const key = [
           isIncoming ? 'in' : 'out',
           record.id || record.assignmentKey || record.nurseEmail || '',
@@ -3722,8 +3755,12 @@
             isIncoming,
             direction: isIncoming ? '+1 調入' : '-1 調出',
             className: isIncoming ? 'movement-in' : 'movement-out',
+            taskToneClass: getMovementTaskToneClass(record),
+            showDeleteAction: false,
             nurseName: record.nurseName || record.nurseEmail || '',
             recordId: record.id || '',
+            recordStartDate,
+            recordEndDate,
             sourceStationName,
             targetStationName,
             ranges: [],
@@ -3733,6 +3770,9 @@
         }
         const group = targetMap.get(key);
         group.ranges.push(overlapRange);
+        if (record.id && isIncoming && overlapRange.start === recordStartDate) {
+          group.showDeleteAction = true;
+        }
         const overlapDays = countDateRangeDays(overlapRange.start, overlapRange.end);
         group.days += overlapDays;
         group.hours += getDispatchHoursForDays(record, overlapDays);
@@ -3774,12 +3814,14 @@
     }
 
     function buildMovementEntryInnerHtml(group, relatedHtml) {
-      const dateText = formatRangeList(group.ranges);
+      const dateText = group.recordStartDate
+        ? formatDateRange(group.recordStartDate, group.recordEndDate || group.recordStartDate)
+        : formatRangeList(group.ranges);
       const mainText = `${dateText} ${group.direction} ${group.nurseName}`;
       const relatedLineHtml = relatedHtml
         ? `<div class="cell-sub">${relatedHtml}</div>`
         : '';
-      const actionHtml = group.recordId
+      const actionHtml = group.recordId && group.showDeleteAction
         ? `
           <div class="movement-entry-actions">
             <button
@@ -3793,15 +3835,37 @@
         : '';
       return `
         <div class="${group.isIncoming ? 'movement-group-item' : ''}">
-          <div class="movement-entry-row">
-            <div class="movement-entry-text">
-              <div>${escapeHtml(mainText)}</div>
-              ${relatedLineHtml}
+          <div class="${buildMovementTaskClassName(group)}">
+            <div class="movement-entry-row">
+              <div class="movement-entry-text">
+                <div>${escapeHtml(mainText)}</div>
+                ${relatedLineHtml}
+              </div>
+              ${actionHtml}
             </div>
-            ${actionHtml}
           </div>
         </div>
       `;
+    }
+
+    function buildMovementTaskClassName(group) {
+      return [
+        'movement-task',
+        group.className || '',
+        group.taskToneClass || ''
+      ].filter(Boolean).join(' ');
+    }
+
+    function getMovementTaskToneClass(record) {
+      const key = [
+        record && record.id,
+        record && record.assignmentKey,
+        getRecordStartDate(record),
+        getRecordEndDate(record),
+        record && record.stationCode,
+        record && record.originalStationCode
+      ].filter(Boolean).join('|');
+      return `movement-task-tone-${hashText(key) % MOVEMENT_TASK_TONE_COUNT}`;
     }
 
     function loadScheduleYear() {
