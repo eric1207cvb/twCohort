@@ -19,6 +19,8 @@ const APP_CONFIG = {
   temporaryDispatchCooldownDays: 30,
   maxHoursPerRecord: 24,
   maxImportRows: 300,
+  pendingAssignmentStatus: '待指派',
+  pendingDispatchNurseName: '待指派',
   fullShiftBreakHours: 1,
   fullShiftBreakThresholdHours: 8,
   unavailableStatusKeywords: ['育嬰', '留停', '留職停薪', '停薪', '留職', '停職', '休職'],
@@ -176,6 +178,7 @@ function getDispatchFairnessStats(payload) {
       assignmentAvailabilityByKey
     })
       .filter((record) => isTemporaryDispatchRecord_(record))
+      .filter((record) => !isPendingAssignmentRecord_(record))
       .filter((record) => !filters.stationCode || record.stationCode === filters.stationCode || record.originalStationCode === filters.stationCode);
 
     return {
@@ -349,6 +352,135 @@ function saveWorkHourDispatchBatch(payload) {
   }
 }
 
+function savePendingWorkHourDispatch(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) {
+      throw new Error('無法辨識目前登入帳號。');
+    }
+
+    acquireDispatchWriteLock_(lock);
+    hasLock = true;
+
+    if (payload && payload.id) {
+      throw new Error('待指派需求只能新增，不可用此動作修改既有紀錄。');
+    }
+
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: Boolean(payload && payload.testMode)
+    });
+    const normalized = normalizePendingWorkHourPayload_(payload, source, context, viewerEmail);
+    const records = getStoredDispatchRecords_();
+    assertNoDuplicatePendingDispatchDemand_(normalized, records);
+    const now = formatTimestamp_(new Date());
+
+    records.unshift({
+      ...normalized,
+      id: Utilities.getUuid(),
+      version: createDispatchRecordVersion_(),
+      createdAt: now,
+      createdBy: viewerEmail,
+      updatedAt: now,
+      updatedBy: viewerEmail,
+      status: '有效'
+    });
+
+    saveStoredDispatchRecords_(records);
+    lock.releaseLock();
+    hasLock = false;
+
+    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    response.createdCount = 1;
+    return response;
+  } catch (error) {
+    console.error('建立待指派調派需求失敗:', error);
+    return {
+      success: false,
+      message: error && error.message ? error.message : '無法建立待指派調派需求。'
+    };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+function assignPendingWorkHourDispatch(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) {
+      throw new Error('無法辨識目前登入帳號。');
+    }
+
+    acquireDispatchWriteLock_(lock);
+    hasLock = true;
+
+    const id = String(payload && payload.id || '').trim();
+    if (!id) {
+      throw new Error('缺少待指派需求 ID。');
+    }
+
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: Boolean(payload && payload.testMode)
+    });
+    const records = getStoredDispatchRecords_();
+    const targetIndex = records.findIndex((record) => record.id === id && record.status === '有效');
+    if (targetIndex < 0) {
+      const inactiveRecord = records.find((record) => record.id === id);
+      if (inactiveRecord) {
+        throw new Error(buildDispatchDeletedConflictMessage_(inactiveRecord, '指派', source));
+      }
+      throw new Error('找不到要指派的待指派需求。請先按「重新整理」查看最新月曆。');
+    }
+
+    const pendingRecord = records[targetIndex];
+    if (!isPendingAssignmentRecord_(pendingRecord)) {
+      throw new Error('這筆需求已經有確定人選，請重新整理月曆。');
+    }
+    assertCanManageRelatedStation_(context, pendingRecord.stationCode, pendingRecord.originalStationCode, '指派此待指派需求');
+    assertDispatchRecordVersion_(pendingRecord, payload, '指派', source);
+
+    const normalized = normalizePendingAssignmentPayload_(pendingRecord, payload, source, viewerEmail);
+    assertNoOverlappingNurseDispatch_(normalized, records);
+    assertTemporaryDispatchCooldown_(normalized, records);
+
+    records[targetIndex] = {
+      ...pendingRecord,
+      ...normalized,
+      id: pendingRecord.id,
+      createdAt: pendingRecord.createdAt,
+      createdBy: pendingRecord.createdBy,
+      assignmentStatus: '',
+      demandCount: 1,
+      version: createDispatchRecordVersion_(),
+      updatedAt: formatTimestamp_(new Date()),
+      updatedBy: viewerEmail,
+      status: '有效'
+    };
+
+    saveStoredDispatchRecords_(records);
+    syncTemporaryDispatchColumn_(source, records, [normalized.assignmentKey]);
+    lock.releaseLock();
+    hasLock = false;
+
+    return getDispatchAppData(payload && payload.filters ? payload.filters : {});
+  } catch (error) {
+    console.error('指派待指派調派需求失敗:', error);
+    return {
+      success: false,
+      message: error && error.message ? error.message : '無法指派待指派調派需求。'
+    };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
 function deleteWorkHourDispatch(payload) {
   const viewerEmail = normalizeEmail_(getCurrentUserEmail());
   const lock = LockService.getScriptLock();
@@ -416,7 +548,7 @@ function previewWorkHourDispatchImport(payload) {
     }
 
     const source = loadDispatchSource_({ forceFresh: true });
-    const context = buildDispatchContext_(source, viewerEmail, { testMode: false });
+    const context = buildFormalImportDispatchContext_(source, viewerEmail);
     assertCanImportDispatchRecords_(context);
     const records = getStoredDispatchRecords_();
     const plan = buildWorkHourDispatchImportPlan_(payload, source, context, records, viewerEmail);
@@ -433,6 +565,12 @@ function previewWorkHourDispatchImport(payload) {
   }
 }
 
+function buildFormalImportDispatchContext_(source, viewerEmail) {
+  return buildDispatchContext_(source, viewerEmail, {
+    testMode: canUseTestMode_(viewerEmail, source && source.assignments)
+  });
+}
+
 function commitWorkHourDispatchImport(payload) {
   const viewerEmail = normalizeEmail_(getCurrentUserEmail());
   const lock = LockService.getScriptLock();
@@ -447,7 +585,7 @@ function commitWorkHourDispatchImport(payload) {
     hasLock = true;
 
     const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
-    const context = buildDispatchContext_(source, viewerEmail, { testMode: false });
+    const context = buildFormalImportDispatchContext_(source, viewerEmail);
     assertCanImportDispatchRecords_(context);
     const records = getStoredDispatchRecords_();
     const plan = buildWorkHourDispatchImportPlan_(payload, source, context, records, viewerEmail);
@@ -475,10 +613,7 @@ function commitWorkHourDispatchImport(payload) {
     lock.releaseLock();
     hasLock = false;
 
-    const response = getDispatchAppData({
-      ...(payload && payload.filters ? payload.filters : {}),
-      testMode: false
-    });
+    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
     response.importSummary = {
       ...plan.summary,
       createdCount: importedRecords.length
@@ -1427,7 +1562,7 @@ function buildDispatchContext_(source, viewerEmail, options) {
       isStationManager: managedStations.length > 0,
       canUseTestMode,
       canCreateStation: managedStations.length > 0 || canUseTestMode,
-      canImportDispatchRecords: managedStationCodes.size > 0,
+      canImportDispatchRecords: managedStationCodes.size > 0 || canUseTestMode,
       testMode
     },
     managedStationCodes,
@@ -1588,6 +1723,18 @@ function assertCanManageStation_(context, stationCode) {
   const canManage = context.stations.some((station) => station.code === normalizedStationCode);
   if (!canManage) {
     throw new Error('您沒有管理此駐站工時調派的權限。');
+  }
+}
+
+function assertCanManageRelatedStation_(context, stationCode, originalStationCode, actionLabel) {
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  const normalizedOriginalStationCode = normalizeOrgCode_(originalStationCode);
+  const canManage = context.stations.some((station) => (
+    station.code === normalizedStationCode
+    || station.code === normalizedOriginalStationCode
+  ));
+  if (!canManage) {
+    throw new Error(`您沒有${actionLabel || '管理此調派需求'}的權限。`);
   }
 }
 
@@ -1859,6 +2006,149 @@ function normalizeWorkHourPayload_(payload, context, viewerEmail) {
   };
 }
 
+function normalizePendingWorkHourPayload_(payload, source, context, viewerEmail) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('待指派需求資料格式錯誤。');
+  }
+
+  const startDate = normalizeDate_(payload.startDate || payload.workDate, '調派起日');
+  const endDate = normalizeDate_(payload.endDate || payload.workDate || startDate, '調派迄日');
+  if (endDate < startDate) {
+    throw new Error('調派迄日不可早於調派起日。');
+  }
+  const stationCode = normalizeOrgCode_(payload.stationCode);
+  const station = context.stations.find((item) => item.code === stationCode);
+  if (!station) {
+    throw new Error('只能建立自己管理範圍內駐站的待指派需求。');
+  }
+  const originalStationCode = normalizeOrgCode_(payload.originalStationCode || payload.sourceStationCode);
+  const originalStation = findSourceStationByCode_(source, originalStationCode);
+  if (!originalStation) {
+    throw new Error('請選擇有效的來源駐站。');
+  }
+  if (originalStation.code === station.code) {
+    throw new Error('待指派需求需選擇不同的來源駐站與調派駐站。');
+  }
+
+  const shiftName = normalizeDispatchMode_(payload.shiftName || APP_CONFIG.shiftOptions[0]);
+  const isMobileCaseDispatch = isMobileCaseDispatch_(shiftName);
+  const isExternalTarget = isExternalStation_(station);
+  if (isExternalTarget) {
+    assertSundayToThursdayDispatchDateRange_(startDate, endDate, '委外駐站');
+  }
+  if (isMobileCaseDispatch) {
+    assertSundayToThursdayDispatchDateRange_(startDate, endDate, '行動收案');
+  }
+
+  const startTime = normalizeTime_(payload.startTime);
+  const endTime = normalizeTime_(payload.endTime);
+  const hours = normalizeHours_(payload.hours, startTime, endTime);
+  const note = normalizeShortText_(payload.note || '', '備註', 300);
+  const dispatchDays = countDateRangeDays_(startDate, endDate);
+
+  return {
+    id: '',
+    workDate: startDate,
+    startDate,
+    endDate,
+    stationCode,
+    stationName: station.name || station.code,
+    assignmentKey: '',
+    nurseEmail: '',
+    nurseName: APP_CONFIG.pendingDispatchNurseName,
+    nurseTitle: '',
+    originalStationCode: originalStation.code,
+    originalStationName: originalStation.name || originalStation.code,
+    temporaryDispatchLabel: '臨時調配',
+    assignmentStatus: APP_CONFIG.pendingAssignmentStatus,
+    demandCount: 1,
+    dispatchDays,
+    dispatchTotalHours: calculateDispatchTotalHours_(hours, dispatchDays),
+    shiftName,
+    startTime,
+    endTime,
+    hours,
+    note,
+    updatedBy: viewerEmail
+  };
+}
+
+function normalizePendingAssignmentPayload_(pendingRecord, payload, source, viewerEmail) {
+  const assignmentKey = String(payload && payload.assignmentKey || '').trim();
+  if (!assignmentKey) {
+    throw new Error('請選擇要指派的護理師。');
+  }
+  const assignment = findNurseAssignmentByKey_(source, assignmentKey);
+  if (!assignment) {
+    throw new Error('找不到可指派的護理師配置。');
+  }
+  if (assignment.isUnavailable) {
+    throw new Error(`${assignment.name || assignment.email} 目前狀態為「${assignment.status || '不可調配'}」，不得調派。`);
+  }
+  if (normalizeOrgCode_(assignment.orgCode) !== normalizeOrgCode_(pendingRecord.originalStationCode)) {
+    throw new Error('確定人選必須屬於這筆需求的來源駐站。');
+  }
+
+  return {
+    id: pendingRecord.id,
+    workDate: pendingRecord.startDate,
+    startDate: pendingRecord.startDate,
+    endDate: pendingRecord.endDate,
+    stationCode: pendingRecord.stationCode,
+    stationName: pendingRecord.stationName,
+    assignmentKey: assignment.assignmentKey,
+    nurseEmail: assignment.email,
+    nurseName: assignment.name || assignment.email,
+    nurseTitle: assignment.title || '',
+    originalStationCode: pendingRecord.originalStationCode,
+    originalStationName: pendingRecord.originalStationName,
+    temporaryDispatchLabel: '臨時調配',
+    dispatchDays: getDispatchDays_(pendingRecord),
+    dispatchTotalHours: getDispatchTotalHours_(pendingRecord),
+    shiftName: pendingRecord.shiftName,
+    startTime: pendingRecord.startTime,
+    endTime: pendingRecord.endTime,
+    hours: pendingRecord.hours,
+    note: normalizeShortText_(pendingRecord.note || '', '備註', 300),
+    updatedBy: viewerEmail
+  };
+}
+
+function findSourceStationByCode_(source, stationCode) {
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  if (!normalizedStationCode) return null;
+  return (Array.isArray(source && source.stations) ? source.stations : [])
+    .find((station) => station && station.code === normalizedStationCode) || null;
+}
+
+function findNurseAssignmentByKey_(source, assignmentKey) {
+  const normalizedAssignmentKey = String(assignmentKey || '').trim();
+  if (!normalizedAssignmentKey) return null;
+  return (Array.isArray(source && source.assignments) ? source.assignments : [])
+    .find((assignment) => (
+      assignment
+      && assignment.assignmentKey === normalizedAssignmentKey
+      && isNurseAssignment_(assignment)
+    )) || null;
+}
+
+function assertNoDuplicatePendingDispatchDemand_(target, records) {
+  const duplicate = (Array.isArray(records) ? records : [])
+    .map(normalizeStoredDispatchRecord_)
+    .filter((record) => (
+      record
+      && record.status === '有效'
+      && isPendingAssignmentRecord_(record)
+      && record.stationCode === target.stationCode
+      && record.originalStationCode === target.originalStationCode
+      && record.startDate === target.startDate
+      && record.endDate === target.endDate
+      && record.shiftName === target.shiftName
+    ))[0];
+  if (!duplicate) return;
+  throw new Error('已有相同期間、來源駐站與調派駐站的待指派需求。若需要多人，請先確認第一筆後再新增下一筆。');
+}
+
 function assertSundayToThursdayDispatchDateRange_(startDate, endDate, label) {
   const blockedDates = [];
   let cursor = startDate;
@@ -2101,6 +2391,15 @@ function isTemporaryDispatchRecord_(record) {
   return Boolean(originalCode && stationCode && originalCode !== stationCode);
 }
 
+function isPendingAssignmentRecord_(record) {
+  return normalizeAssignmentStatus_(record && record.assignmentStatus) === APP_CONFIG.pendingAssignmentStatus;
+}
+
+function normalizeAssignmentStatus_(value) {
+  const normalized = String(value || '').trim();
+  return normalized === APP_CONFIG.pendingAssignmentStatus ? APP_CONFIG.pendingAssignmentStatus : '';
+}
+
 function hasTemporaryDispatchCooldownGap_(existing, target) {
   if (!existing || !target) return true;
   const cooldownDays = Number(APP_CONFIG.temporaryDispatchCooldownDays || 0);
@@ -2333,16 +2632,23 @@ function normalizeStoredDispatchRecord_(record) {
   if (!record || typeof record !== 'object') return null;
   const stationCode = normalizeOrgCode_(record.stationCode);
   const nurseEmail = normalizeEmail_(record.nurseEmail);
-  const assignmentKey = String(record.assignmentKey || buildAssignmentKey_(nurseEmail, stationCode)).trim();
+  const assignmentStatus = normalizeAssignmentStatus_(record.assignmentStatus);
+  const isPendingAssignment = assignmentStatus === APP_CONFIG.pendingAssignmentStatus;
+  const assignmentKey = isPendingAssignment
+    ? String(record.assignmentKey || '').trim()
+    : String(record.assignmentKey || buildAssignmentKey_(nurseEmail, stationCode)).trim();
   const startDate = String(record.startDate || record.workDate || '').trim();
   const rawEndDate = String(record.endDate || record.workDate || startDate).trim();
   const endDate = rawEndDate < startDate ? startDate : rawEndDate;
-  if (!record.id || !startDate || !endDate || !stationCode || !nurseEmail || !assignmentKey) return null;
+  if (!record.id || !startDate || !endDate || !stationCode) return null;
+  if (!isPendingAssignment && (!nurseEmail || !assignmentKey)) return null;
 
   const dispatchDays = Number(record.dispatchDays || countDateRangeDays_(startDate, endDate));
   const startTime = String(record.startTime || '').trim();
   const endTime = String(record.endTime || '').trim();
   const hours = normalizeStoredHours_(record.hours, startTime, endTime);
+  const originalStationCode = normalizeOrgCode_(record.originalStationCode || stationCode);
+  if (isPendingAssignment && !originalStationCode) return null;
 
   return {
     id: String(record.id || '').trim(),
@@ -2354,11 +2660,13 @@ function normalizeStoredDispatchRecord_(record) {
     stationName: String(record.stationName || stationCode).trim(),
     assignmentKey,
     nurseEmail,
-    nurseName: String(record.nurseName || nurseEmail).trim(),
+    nurseName: String(record.nurseName || (isPendingAssignment ? APP_CONFIG.pendingDispatchNurseName : nurseEmail)).trim(),
     nurseTitle: String(record.nurseTitle || '').trim(),
-    originalStationCode: normalizeOrgCode_(record.originalStationCode || stationCode),
+    originalStationCode,
     originalStationName: String(record.originalStationName || record.stationName || stationCode).trim(),
     temporaryDispatchLabel: String(record.temporaryDispatchLabel || '').trim(),
+    assignmentStatus,
+    demandCount: Math.max(1, Number(record.demandCount || 1)),
     dispatchDays,
     dispatchTotalHours: calculateDispatchTotalHours_(hours, dispatchDays),
     shiftName: normalizeDispatchMode_(record.shiftName || APP_CONFIG.shiftOptions[0]),

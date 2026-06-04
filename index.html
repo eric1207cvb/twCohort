@@ -784,7 +784,7 @@
 
     .assignment-scope {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 152px;
+      grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
       gap: 12px;
       align-items: end;
     }
@@ -803,8 +803,15 @@
       background: var(--surface-strong);
       padding: 3px;
       display: grid;
-      grid-template-columns: 1fr 1fr;
       gap: 3px;
+    }
+
+    .shift-mode-toggle {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .dispatch-target-toggle {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .shift-mode-btn,
@@ -1084,6 +1091,14 @@
       color: #b91c1c;
     }
 
+    .schedule-pending-line {
+      margin-top: 4px;
+      color: #92400e;
+      font-size: 0.74rem;
+      font-weight: 900;
+      line-height: 1.25;
+    }
+
     .month-cell-summary {
       display: grid;
       gap: 5px;
@@ -1142,6 +1157,11 @@
     .month-flow-pill.is-out {
       background: #fee2e2;
       color: #b91c1c;
+    }
+
+    .month-flow-pill.is-pending {
+      background: #fef3c7;
+      color: #92400e;
     }
 
     .month-days-line {
@@ -1235,6 +1255,15 @@
       color: #991b1b;
     }
 
+    .movement-task.is-pending {
+      border-style: dashed;
+      background: #fffbeb;
+    }
+
+    .movement-task.is-pending .movement-entry-text {
+      color: #92400e;
+    }
+
     .movement-task-tone-0 { background: #ecfdf5; border-color: #0f766e; }
     .movement-task-tone-1 { background: #eff6ff; border-color: #2563eb; }
     .movement-task-tone-2 { background: #f5f3ff; border-color: #7c3aed; }
@@ -1258,6 +1287,10 @@
 
     .movement-entry-actions {
       flex: 0 0 auto;
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
 
     .movement-action-btn {
@@ -1276,6 +1309,12 @@
       border-color: #fecaca;
       background: #fff7f7;
       color: var(--danger);
+    }
+
+    .movement-action-btn[data-schedule-assign] {
+      border-color: #bae6fd;
+      background: #f0f9ff;
+      color: #0369a1;
     }
 
     .schedule-entry {
@@ -1617,6 +1656,7 @@
                 <div class="dispatch-target-toggle" role="radiogroup" aria-label="調派對象">
                   <button class="btn dispatch-target-btn is-active" type="button" data-dispatch-target-mode="single" aria-pressed="true">自選</button>
                   <button class="btn dispatch-target-btn" type="button" data-dispatch-target-mode="station" aria-pressed="false">整站</button>
+                  <button class="btn dispatch-target-btn" type="button" data-dispatch-target-mode="pending" aria-pressed="false">待指派</button>
                 </div>
               </div>
             </div>
@@ -1925,6 +1965,32 @@
       </section>
     </div>
 
+    <div class="modal-overlay hidden" id="pending-assignment-modal" role="dialog" aria-modal="true" aria-labelledby="pending-assignment-title">
+      <section class="station-modal">
+        <div class="modal-header">
+          <div>
+            <div class="panel-title" id="pending-assignment-title">指派待確認人選</div>
+            <div class="muted" id="pending-assignment-description">從來源駐站可用護理師中選擇確定人選。</div>
+          </div>
+          <button class="btn btn-ghost" type="button" id="pending-assignment-close">關閉</button>
+        </div>
+        <div class="station-form">
+          <div class="edit-context">
+            <div class="edit-context-grid" id="pending-assignment-summary"></div>
+          </div>
+          <div class="field">
+            <label for="pending-assignment-nurse">確定人選</label>
+            <select id="pending-assignment-nurse"></select>
+          </div>
+          <div class="status" id="pending-assignment-status"></div>
+        </div>
+        <div class="modal-footer">
+          <div class="muted">確認後會轉為正式臨時調派，並刷新月曆與年度紀錄。</div>
+          <button class="btn btn-primary" type="button" id="pending-assignment-save-btn">確認指派</button>
+        </div>
+      </section>
+    </div>
+
   </div>
 
   <script>
@@ -1942,6 +2008,8 @@
       isCreatingStation: false,
       isDeletingStation: false,
       isDeletingRecord: false,
+      isAssigningPendingRecord: false,
+      pendingAssignmentRecordId: '',
       stationModalType: 'general',
       testMode: false,
       scheduleView: 'day',
@@ -2151,7 +2219,15 @@
         'station-alias',
         'station-manager',
         'station-status',
-        'station-save-btn'
+        'station-save-btn',
+        'pending-assignment-modal',
+        'pending-assignment-title',
+        'pending-assignment-description',
+        'pending-assignment-close',
+        'pending-assignment-summary',
+        'pending-assignment-nurse',
+        'pending-assignment-status',
+        'pending-assignment-save-btn'
       ].forEach((id) => {
         el[toCamel(id)] = document.getElementById(id);
       });
@@ -2288,6 +2364,11 @@
       el.stationModal.addEventListener('click', (event) => {
         if (event.target === el.stationModal) closeStationModal();
       });
+      el.pendingAssignmentClose.addEventListener('click', closePendingAssignmentModal);
+      el.pendingAssignmentModal.addEventListener('click', (event) => {
+        if (event.target === el.pendingAssignmentModal) closePendingAssignmentModal();
+      });
+      el.pendingAssignmentSaveBtn.addEventListener('click', assignPendingRecord);
       document.querySelectorAll('[data-station-type]').forEach((button) => {
         button.addEventListener('click', () => setStationModalType(button.getAttribute('data-station-type')));
       });
@@ -2602,7 +2683,7 @@
     function collectDispatchImportPayload() {
       const filters = {
         ...collectFilters(),
-        testMode: false
+        testMode: state.testMode
       };
       return {
         year: normalizeYear(el.importYear && el.importYear.value),
@@ -2874,6 +2955,7 @@
         || state.isCreatingStation
         || state.isDeletingStation
         || state.isDeletingRecord
+        || state.isAssigningPendingRecord
         || state.fairness.isLoading
         || isEditingRecord()
       ) return;
@@ -3056,12 +3138,12 @@
         ? preferredValue
         : (el.nurseOriginStation.value || '');
       const targetStation = getStationByCode(el.stationSelect.value);
-      const useCrossStationSources = isExternalStation(targetStation) || isMobileCaseMode();
+      const useCrossStationSources = isPendingAssignmentMode() || isExternalStation(targetStation) || isMobileCaseMode();
       const sourceStations = useCrossStationSources
         ? getAllNurseSourceStations()
         : getOrderedStations();
       el.nurseOriginStation.innerHTML = [
-        `<option value="">${isStationBatchMode() ? '請選擇來源駐站' : (useCrossStationSources ? '全部駐站' : '全部原駐站')}</option>`,
+        `<option value="">${(isStationBatchMode() || isPendingAssignmentMode()) ? '請選擇來源駐站' : (useCrossStationSources ? '全部駐站' : '全部原駐站')}</option>`,
         ...sourceStations.map((station) => (
           `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
         ))
@@ -3267,13 +3349,13 @@
 
     function selectDispatchTargetMode(mode) {
       const nextMode = normalizeDispatchTargetMode(mode);
-      if (el.recordId.value && nextMode === 'station') return;
+      if (el.recordId.value && nextMode !== 'single') return;
       if (el.dispatchTargetMode.value === nextMode) {
         updateDispatchTargetModeUi();
         return;
       }
       el.dispatchTargetMode.value = nextMode;
-      if (nextMode === 'station') setSelectedAssignmentKeys([]);
+      if (nextMode === 'station' || nextMode === 'pending') setSelectedAssignmentKeys([]);
       renderOriginStationOptions();
       renderFormNurseOptions();
       updateDispatchTargetModeUi();
@@ -3282,8 +3364,9 @@
     function updateDispatchTargetModeUi() {
       const mode = getDispatchTargetMode();
       const isBatch = mode === 'station';
+      const isPending = mode === 'pending';
       const isEditing = Boolean(el.recordId && el.recordId.value);
-      if (isEditing && isBatch) {
+      if (isEditing && mode !== 'single') {
         el.dispatchTargetMode.value = 'single';
         return updateDispatchTargetModeUi();
       }
@@ -3292,11 +3375,11 @@
         const buttonMode = normalizeDispatchTargetMode(button.getAttribute('data-dispatch-target-mode'));
         const isActive = buttonMode === mode;
         button.classList.toggle('is-active', isActive);
-        button.disabled = isEditing && buttonMode === 'station';
+        button.disabled = isEditing && buttonMode !== 'single';
         button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
 
-      el.nurseSelectField.classList.toggle('hidden', isBatch);
+      el.nurseSelectField.classList.toggle('hidden', isBatch || isPending);
       el.nurseSelect.required = false;
       el.dispatchTargetSummary.textContent = buildDispatchTargetSummary();
       renderDispatchTargetPreview();
@@ -3305,7 +3388,7 @@
 
     function renderDispatchTargetPreview() {
       if (!el.dispatchTargetPreview) return;
-      if (!isStationBatchMode()) {
+      if (!isStationBatchMode() && !isPendingAssignmentMode()) {
         el.dispatchTargetPreview.classList.add('hidden');
         el.dispatchTargetPreview.innerHTML = '';
         return;
@@ -3315,6 +3398,19 @@
       const originStationCode = el.nurseOriginStation.value || '';
       if (!originStationCode) {
         el.dispatchTargetPreview.innerHTML = '<div class="dispatch-target-preview-title">請先選擇來源駐站，系統會列出整站調派人員。</div>';
+        return;
+      }
+
+      if (isPendingAssignmentMode()) {
+        const originName = getSourceStationDisplayName(originStationCode);
+        const targetName = getStationDisplayName(getStationByCode(el.stationSelect.value));
+        el.dispatchTargetPreview.innerHTML = `
+          <div class="dispatch-target-preview-title">將建立 1 人待指派需求，來源駐站確定人選後可在月曆上完成指派。</div>
+          <div class="dispatch-target-preview-list">
+            <span class="dispatch-target-pill">原：${escapeHtml(originName)}</span>
+            <span class="dispatch-target-pill">至：${escapeHtml(targetName)}</span>
+          </div>
+        `;
         return;
       }
 
@@ -3341,6 +3437,9 @@
     }
 
     function buildDispatchTargetSummary() {
+      if (isPendingAssignmentMode()) {
+        return el.nurseOriginStation.value ? '待指派 1 人' : '未選來源';
+      }
       if (!isStationBatchMode()) {
         const selectedCount = getSelectedAssignmentKeys().length;
         if (el.recordId.value) return selectedCount ? `修改 ${formatNumber(selectedCount)} 人` : '修改';
@@ -3377,8 +3476,14 @@
       return getDispatchTargetMode() === 'station';
     }
 
+    function isPendingAssignmentMode() {
+      return getDispatchTargetMode() === 'pending';
+    }
+
     function normalizeDispatchTargetMode(value) {
-      return String(value || '').trim() === 'station' ? 'station' : 'single';
+      const normalized = String(value || '').trim();
+      if (normalized === 'station' || normalized === 'pending') return normalized;
+      return 'single';
     }
 
     function updateSaveButtonText() {
@@ -3389,6 +3494,10 @@
       const selectedCount = getSelectedAssignmentKeys().length;
       if (isStationBatchMode()) {
         el.saveBtn.textContent = '新增整站調派';
+        return;
+      }
+      if (isPendingAssignmentMode()) {
+        el.saveBtn.textContent = '新增待指派需求';
         return;
       }
       el.saveBtn.textContent = selectedCount > 1 ? '新增自選調派' : '新增調派';
@@ -3614,12 +3723,114 @@
     }
 
     function handleScheduleBodyClick(event) {
+      const assignButton = event.target.closest('[data-schedule-assign]');
+      if (assignButton && el.scheduleBody.contains(assignButton)) {
+        event.preventDefault();
+        event.stopPropagation();
+        openPendingAssignmentModal(assignButton.getAttribute('data-schedule-assign'));
+        return;
+      }
       const deleteButton = event.target.closest('[data-schedule-delete]');
       if (deleteButton && el.scheduleBody.contains(deleteButton)) {
         event.preventDefault();
         event.stopPropagation();
         deleteScheduleTemporaryRecord(deleteButton.getAttribute('data-schedule-delete'));
       }
+    }
+
+    function openPendingAssignmentModal(id) {
+      const record = getRecordById(id);
+      if (!record || !isPendingAssignmentRecord(record)) {
+        setDispatchActionError('找不到待指派需求，請重新整理月曆後再試。', '指派失敗');
+        return;
+      }
+      const candidates = getNursesForStation(record.originalStationCode)
+        .filter((nurse) => !nurse.isUnavailable)
+        .sort(compareNurseStationsByDisplayOrder);
+      state.pendingAssignmentRecordId = record.id;
+      el.pendingAssignmentTitle.textContent = '指派待確認人選';
+      el.pendingAssignmentDescription.textContent = `${formatDispatchDateRange(record)}｜${getRecordOriginalStationDisplayName(record)} → ${getRecordTargetStationDisplayName(record)}`;
+      el.pendingAssignmentSummary.innerHTML = [
+        buildEditContextItemHtml('期間', formatDispatchDateRange(record)),
+        buildEditContextItemHtml('來源駐站', getRecordOriginalStationDisplayName(record)),
+        buildEditContextItemHtml('調派駐站', getRecordTargetStationDisplayName(record)),
+        buildEditContextItemHtml('班別', normalizeDispatchMode(record.shiftName || '未填班別'))
+      ].join('');
+      el.pendingAssignmentNurse.innerHTML = candidates.length
+        ? [
+          '<option value="">請選擇確定人選</option>',
+          ...candidates.map((nurse) => (
+            `<option value="${escapeHtml(nurse.assignmentKey)}">${escapeHtml(formatNurseOptionLabel(nurse))}</option>`
+          ))
+        ].join('')
+        : '<option value="">此來源駐站沒有可指派人員</option>';
+      el.pendingAssignmentNurse.disabled = !candidates.length;
+      el.pendingAssignmentSaveBtn.disabled = !candidates.length;
+      setPendingAssignmentStatus('');
+      el.pendingAssignmentModal.classList.remove('hidden');
+      el.pendingAssignmentNurse.focus();
+    }
+
+    function closePendingAssignmentModal(force) {
+      if (state.isAssigningPendingRecord && !force) return;
+      state.pendingAssignmentRecordId = '';
+      el.pendingAssignmentModal.classList.add('hidden');
+      setPendingAssignmentStatus('');
+    }
+
+    async function assignPendingRecord() {
+      if (state.isAssigningPendingRecord) return;
+      const id = state.pendingAssignmentRecordId || '';
+      const record = getRecordById(id);
+      const assignmentKey = el.pendingAssignmentNurse.value || '';
+      if (!record || !isPendingAssignmentRecord(record)) {
+        setPendingAssignmentStatus('找不到待指派需求，請重新整理月曆後再試。', 'error');
+        return;
+      }
+      if (!assignmentKey) {
+        setPendingAssignmentStatus('請選擇確定人選。', 'error');
+        return;
+      }
+
+      state.isAssigningPendingRecord = true;
+      el.pendingAssignmentSaveBtn.disabled = true;
+      setPendingAssignmentStatus('指派中...');
+      setRecordsStatus('待指派需求確認中，完成後會刷新月曆與年度紀錄...');
+      try {
+        const response = await callServer('assignPendingWorkHourDispatch', {
+          id,
+          recordVersion: record.version || '',
+          assignmentKey,
+          testMode: state.testMode,
+          filters: collectFilters()
+        });
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '指派失敗。');
+        }
+        const nurse = state.nurseByAssignmentKey.get(assignmentKey) || {};
+        const successMessage = `${nurse.name || nurse.email || '護理師'} 已指派至 ${getRecordTargetStationDisplayName(record)}。`;
+        applyData(response, {
+          reason: 'assign-pending-dispatch',
+          skipFairnessAutoLoad: true
+        });
+        closePendingAssignmentModal(true);
+        setStatus(successMessage, 'success');
+        await refreshViewsAfterMutation(successMessage, {
+          reason: 'assign-pending-dispatch'
+        });
+      } catch (error) {
+        const message = error && error.message ? error.message : '指派失敗。';
+        setPendingAssignmentStatus(message, 'error');
+        setRecordsStatus(`待指派需求指派失敗：${message} 月曆與紀錄未變更。`, 'error');
+      } finally {
+        state.isAssigningPendingRecord = false;
+        el.pendingAssignmentSaveBtn.disabled = false;
+      }
+    }
+
+    function setPendingAssignmentStatus(message, type) {
+      el.pendingAssignmentStatus.textContent = message || '';
+      el.pendingAssignmentStatus.className = `status${type ? ` ${type}` : ''}`;
     }
 
     function deleteScheduleTemporaryRecord(id) {
@@ -3937,8 +4148,15 @@
       const movements = getDailyMovementRecords(stationCode, dateString);
       const incomingKeys = new Set();
       const outgoingKeys = new Set();
+      let pendingIncomingCount = 0;
+      let pendingOutgoingCount = 0;
 
       movements.forEach((record) => {
+        if (isPendingAssignmentRecord(record)) {
+          if (record.stationCode === stationCode) pendingIncomingCount += getPendingDemandCount(record);
+          if (record.originalStationCode === stationCode) pendingOutgoingCount += getPendingDemandCount(record);
+          return;
+        }
         if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
         if (record.originalStationCode === stationCode) outgoingKeys.add(record.assignmentKey);
       });
@@ -3949,11 +4167,12 @@
       const countText = baseCount === adjustedCount
         ? `人數 ${formatNumber(baseCount)}`
         : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
+      const pendingText = buildPendingDemandText(pendingIncomingCount, pendingOutgoingCount);
       const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, dateString, dateString);
 
       return {
         className,
-        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}`
+        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${pendingText}${movementHtml}`
       };
     }
 
@@ -3967,10 +4186,19 @@
       const outgoingRecords = [];
       let incomingDays = 0;
       let outgoingDays = 0;
+      let pendingIncomingCount = 0;
+      let pendingOutgoingCount = 0;
+      let pendingDays = 0;
 
       movements.forEach((record) => {
         const overlapRange = getRecordOverlapRange(record, month.start, month.end);
         const overlapDays = overlapRange ? countDateRangeDays(overlapRange.start, overlapRange.end) : 0;
+        if (isPendingAssignmentRecord(record)) {
+          if (record.stationCode === stationCode) pendingIncomingCount += getPendingDemandCount(record);
+          if (record.originalStationCode === stationCode) pendingOutgoingCount += getPendingDemandCount(record);
+          pendingDays += overlapDays;
+          return;
+        }
         if (record.stationCode === stationCode) {
           incomingKeys.add(record.assignmentKey);
           incomingRecords.push(record);
@@ -3996,15 +4224,19 @@
         incomingRecords,
         outgoingRecords,
         incomingDays,
-        outgoingDays
+        outgoingDays,
+        pendingIncomingCount,
+        pendingOutgoingCount,
+        pendingDays
       });
       const flowHtml = movements.length
         ? `
           <div class="month-flow-line">
             <span class="month-flow-pill is-in">入 ${escapeHtml(formatNumber(incomingKeys.size))}</span>
             <span class="month-flow-pill is-out">出 ${escapeHtml(formatNumber(outgoingKeys.size))}</span>
+            ${pendingIncomingCount || pendingOutgoingCount ? `<span class="month-flow-pill is-pending">待 ${escapeHtml(formatNumber(pendingIncomingCount + pendingOutgoingCount))}</span>` : ''}
           </div>
-          <div class="month-days-line">${escapeHtml(formatNumber(incomingDays + outgoingDays))} 天</div>
+          <div class="month-days-line">${escapeHtml(formatNumber(incomingDays + outgoingDays + pendingDays))} 天</div>
         `
         : '';
 
@@ -4031,7 +4263,8 @@
         `${getStationDisplayName(station)}｜${month.label || ''}`,
         `人數：${formatNumber(summary.baseCount)} → ${formatNumber(summary.adjustedCount)}`,
         `調入：${formatNumber(incomingRecords.length)} 筆 / ${formatDaysText(summary.incomingDays)}`,
-        `調出：${formatNumber(outgoingRecords.length)} 筆 / ${formatDaysText(summary.outgoingDays)}`
+        `調出：${formatNumber(outgoingRecords.length)} 筆 / ${formatDaysText(summary.outgoingDays)}`,
+        `待指派：${formatNumber(Number(summary.pendingIncomingCount || 0) + Number(summary.pendingOutgoingCount || 0))} 筆 / ${formatDaysText(summary.pendingDays)}`
       ];
 
       if (incomingRecords.length) {
@@ -4069,8 +4302,15 @@
       const movements = getWeeklyMovementRecords(stationCode, week);
       const incomingKeys = new Set();
       const outgoingKeys = new Set();
+      let pendingIncomingCount = 0;
+      let pendingOutgoingCount = 0;
 
       movements.forEach((record) => {
+        if (isPendingAssignmentRecord(record)) {
+          if (record.stationCode === stationCode) pendingIncomingCount += getPendingDemandCount(record);
+          if (record.originalStationCode === stationCode) pendingOutgoingCount += getPendingDemandCount(record);
+          return;
+        }
         if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
         if (record.originalStationCode === stationCode) outgoingKeys.add(record.assignmentKey);
       });
@@ -4081,11 +4321,12 @@
       const countText = baseCount === adjustedCount
         ? `人數 ${formatNumber(baseCount)}`
         : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
+      const pendingText = buildPendingDemandText(pendingIncomingCount, pendingOutgoingCount);
       const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, week.start, week.end);
 
       return {
         className,
-        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}`
+        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${pendingText}${movementHtml}`
       };
     }
 
@@ -4101,6 +4342,15 @@
       return ['schedule-count', buildScheduleCellClassName(adjustedCount, movementCount)]
         .filter(Boolean)
         .join(' ');
+    }
+
+    function buildPendingDemandText(pendingIncomingCount, pendingOutgoingCount) {
+      const parts = [];
+      if (pendingIncomingCount) parts.push(`待補 ${formatNumber(pendingIncomingCount)}`);
+      if (pendingOutgoingCount) parts.push(`待派 ${formatNumber(pendingOutgoingCount)}`);
+      return parts.length
+        ? `<div class="schedule-pending-line">${escapeHtml(parts.join('｜'))}</div>`
+        : '';
     }
 
     function buildStationLabelHtml(stationOrCode, text) {
@@ -4225,6 +4475,7 @@
       sourceRecords.forEach((record) => {
         const temporaryInfo = getTemporaryDispatchInfo(record);
         if (isRecordNurseUnavailable(record) || !temporaryInfo.isTemporary || !recordOverlapsRange(record, dateString, dateString)) return;
+        if (isPendingAssignmentRecord(record)) return;
         if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
         if (record.originalStationCode === stationCode) outgoingKeys.add(record.assignmentKey);
       });
@@ -4286,6 +4537,7 @@
         const targetStationName = getRecordTargetStationDisplayName(record);
         const recordStartDate = getRecordStartDate(record);
         const recordEndDate = getRecordEndDate(record);
+        const isPending = isPendingAssignmentRecord(record);
         const key = [
           isIncoming ? 'in' : 'out',
           record.id || record.assignmentKey || record.nurseEmail || '',
@@ -4304,14 +4556,20 @@
         if (!targetMap.has(key)) {
           targetMap.set(key, {
             isIncoming,
-            direction: isIncoming ? '+1 調入' : '-1 調出',
+            isPending,
+            direction: isPending
+              ? (isIncoming ? '+1 待補' : '待派')
+              : (isIncoming ? '+1 調入' : '-1 調出'),
             className: isIncoming ? 'movement-in' : 'movement-out',
             taskToneClass: getMovementTaskToneClass(record),
+            showAssignAction: false,
             showDeleteAction: false,
-            nurseName: record.nurseName || record.nurseEmail || '',
+            nurseName: isPending ? '待指派' : (record.nurseName || record.nurseEmail || ''),
             recordId: record.id || '',
+            recordVersion: record.version || '',
             recordStartDate,
             recordEndDate,
+            originalStationCode: record.originalStationCode || '',
             sourceStationName,
             targetStationName,
             ranges: [],
@@ -4321,7 +4579,10 @@
         }
         const group = targetMap.get(key);
         group.ranges.push(overlapRange);
-        if (record.id && isIncoming && overlapRange.start === recordStartDate) {
+        if (record.id && isPending && overlapRange.start === recordStartDate) {
+          group.showAssignAction = true;
+          group.showDeleteAction = state.managedStationCodeSet.has(record.stationCode);
+        } else if (record.id && isIncoming && overlapRange.start === recordStartDate) {
           group.showDeleteAction = true;
         }
         const overlapDays = countDateRangeDays(overlapRange.start, overlapRange.end);
@@ -4372,17 +4633,28 @@
       const relatedLineHtml = relatedHtml
         ? `<div class="cell-sub">${relatedHtml}</div>`
         : '';
-      const actionHtml = group.recordId && group.showDeleteAction
+      const assignActionHtml = group.recordId && group.showAssignAction
         ? `
-          <div class="movement-entry-actions">
-            <button
-              class="movement-action-btn"
-              type="button"
-              data-schedule-delete="${escapeHtml(group.recordId)}"
-              title="移除這筆臨時調派"
-            >移除</button>
-          </div>
+          <button
+            class="movement-action-btn"
+            type="button"
+            data-schedule-assign="${escapeHtml(group.recordId)}"
+            title="選擇來源駐站的確定人選"
+          >指派</button>
         `
+        : '';
+      const deleteActionHtml = group.recordId && group.showDeleteAction
+        ? `
+          <button
+            class="movement-action-btn"
+            type="button"
+            data-schedule-delete="${escapeHtml(group.recordId)}"
+            title="移除這筆臨時調派"
+          >移除</button>
+        `
+        : '';
+      const actionHtml = assignActionHtml || deleteActionHtml
+        ? `<div class="movement-entry-actions">${assignActionHtml}${deleteActionHtml}</div>`
         : '';
       return `
         <div class="${group.isIncoming ? 'movement-group-item' : ''}">
@@ -4403,6 +4675,7 @@
       return [
         'movement-task',
         group.className || '',
+        group.isPending ? 'is-pending' : '',
         group.taskToneClass || ''
       ].filter(Boolean).join(' ');
     }
@@ -4965,20 +5238,25 @@
 
       const station = getStationByCode(el.stationSelect.value);
       const isBatch = isStationBatchMode() && !el.recordId.value;
+      const isPending = isPendingAssignmentMode() && !el.recordId.value;
       const selectedNurses = isBatch ? getStationBatchCandidates() : getSelectedNurseCandidates();
       const nurse = !isBatch && selectedNurses.length === 1 ? selectedNurses[0] : null;
-      const isSelfBatch = !isBatch && !el.recordId.value && selectedNurses.length > 1;
+      const isSelfBatch = !isBatch && !isPending && !el.recordId.value && selectedNurses.length > 1;
       const shouldUseBatchSave = isBatch || isSelfBatch;
 
-      if (!station || (!isBatch && !selectedNurses.length)) {
+      if (!station || (!isBatch && !isPending && !selectedNurses.length)) {
         setDispatchActionError('請選擇有效的駐站與護理師。', '調派未建立');
         return;
       }
-      if (isBatch && !el.nurseOriginStation.value) {
-        setDispatchActionError('整個駐站調派請先選擇來源駐站。', '調派未建立');
+      if ((isBatch || isPending) && !el.nurseOriginStation.value) {
+        setDispatchActionError(isPending ? '待指派需求請先選擇來源駐站。' : '整個駐站調派請先選擇來源駐站。', '調派未建立');
         return;
       }
-      if (!selectedNurses.length) {
+      if (isPending && el.nurseOriginStation.value === station.code) {
+        setDispatchActionError('待指派需求需選擇不同的來源駐站與調派駐站。', '調派未建立');
+        return;
+      }
+      if (!isPending && !selectedNurses.length) {
         setDispatchActionError(isBatch ? '此來源駐站沒有可批次調派的人員。' : '請選擇有效的護理師。', '調派未建立');
         return;
       }
@@ -5015,9 +5293,10 @@
         endDate: el.dispatchEndDate.value,
         workDate: el.dispatchStartDate.value,
         stationCode: station.code,
+        originalStationCode: isPending ? el.nurseOriginStation.value : '',
         assignmentKey: nurse ? nurse.assignmentKey : '',
         assignmentKeys: shouldUseBatchSave ? selectedNurses.map((item) => item.assignmentKey) : [],
-        dispatchTargetMode: isBatch ? 'station' : (isSelfBatch ? 'custom' : 'single'),
+        dispatchTargetMode: isPending ? 'pending' : (isBatch ? 'station' : (isSelfBatch ? 'custom' : 'single')),
         shiftName: el.shiftName.value,
         startTime: '',
         endTime: '',
@@ -5029,26 +5308,31 @@
 
       state.isSaving = true;
       el.saveBtn.disabled = true;
-      const actionText = payload.id ? '調派更新' : '調派建立';
-      setStatus(isBatch ? '儲存整站調派中...' : `${actionText}中...`);
+      const actionText = isPending ? '待指派需求建立' : (payload.id ? '調派更新' : '調派建立');
+      setStatus(isPending ? '建立待指派需求中...' : (isBatch ? '儲存整站調派中...' : `${actionText}中...`));
       setRecordsStatus(`${actionText}中，完成後會刷新月曆與年度紀錄...`);
 
       try {
-        const response = await callServer(shouldUseBatchSave ? 'saveWorkHourDispatchBatch' : 'saveWorkHourDispatch', payload);
+        const serverFunction = isPending
+          ? 'savePendingWorkHourDispatch'
+          : (shouldUseBatchSave ? 'saveWorkHourDispatchBatch' : 'saveWorkHourDispatch');
+        const response = await callServer(serverFunction, payload);
         if (!response || !response.success) {
           throw new Error(response && response.message ? response.message : '儲存失敗。');
         }
-        const successMessage = isBatch
+        const successMessage = isPending
+          ? '待指派需求已建立。'
+          : (isBatch
           ? `整站調派已建立 ${formatNumber(response.createdCount || selectedNurses.length)} 人。`
-          : (isSelfBatch ? `自選調派已建立 ${formatNumber(response.createdCount || selectedNurses.length)} 人。` : (payload.id ? '工時調派已更新。' : '工時調派已建立。'));
+          : (isSelfBatch ? `自選調派已建立 ${formatNumber(response.createdCount || selectedNurses.length)} 人。` : (payload.id ? '工時調派已更新。' : '工時調派已建立。')));
         applyData(response, {
-          reason: payload.id ? 'update-dispatch' : 'create-dispatch',
+          reason: isPending ? 'create-pending-dispatch' : (payload.id ? 'update-dispatch' : 'create-dispatch'),
           skipFairnessAutoLoad: true
         });
         resetForm({ preserveStatus: true });
         setStatus(successMessage, 'success');
         await refreshViewsAfterMutation(successMessage, {
-          reason: payload.id ? 'update-dispatch' : 'create-dispatch'
+          reason: isPending ? 'create-pending-dispatch' : (payload.id ? 'update-dispatch' : 'create-dispatch')
         });
       } catch (error) {
         setDispatchActionError(error && error.message ? error.message : '儲存失敗。', payload && payload.id ? '調派更新失敗' : '調派建立失敗');
@@ -5545,8 +5829,21 @@
       return Boolean(record && record.isNurseUnavailable);
     }
 
+    function isPendingAssignmentRecord(record) {
+      return String(record && record.assignmentStatus || '').trim() === '待指派';
+    }
+
+    function getPendingDemandCount(record) {
+      const count = Number(record && record.demandCount || 1);
+      return Number.isFinite(count) && count > 0 ? count : 1;
+    }
+
     function updateDispatchRuleNote() {
       const station = getStationByCode(el.stationSelect.value);
+      if (isPendingAssignmentMode()) {
+        el.dispatchRuleNote.textContent = '待指派會先建立臨時駐站需求，不先指定護理師；確定人選後可在月曆卡片按「指派」。';
+        return;
+      }
       if (isMobileCaseMode()) {
         el.dispatchRuleNote.textContent = '行動收案僅可安排週日到週四，並可從各駐站選擇護理師；日曆固定顯示該週週日到週四。';
         return;
