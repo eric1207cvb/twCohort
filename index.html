@@ -2028,8 +2028,23 @@
       });
       el.startTime.addEventListener('input', updateHoursFromTimes);
       el.endTime.addEventListener('input', updateHoursFromTimes);
-      el.clearFormBtn.addEventListener('click', resetForm);
-      el.cancelEditBtn.addEventListener('click', resetForm);
+      el.clearFormBtn.addEventListener('click', () => {
+        const wasEditing = isEditingRecord();
+        resetForm({
+          statusMessage: wasEditing ? '已取消修改，未變更任何調派。' : '已清空欄位，尚未建立調派。',
+          statusType: wasEditing ? 'success' : ''
+        });
+        setRecordsStatus(wasEditing
+          ? '已取消修改：月曆與紀錄未變更。'
+          : '已清空欄位：尚未建立調派，月曆與紀錄未變更。', 'success');
+      });
+      el.cancelEditBtn.addEventListener('click', () => {
+        resetForm({
+          statusMessage: '已取消修改，未變更任何調派。',
+          statusType: 'success'
+        });
+        setRecordsStatus('已取消修改：月曆與紀錄未變更。', 'success');
+      });
       el.dispatchForm.addEventListener('submit', saveDispatch);
       el.stationModalClose.addEventListener('click', closeStationModal);
       el.stationModal.addEventListener('click', (event) => {
@@ -2103,9 +2118,11 @@
       state.recordsSnapshotKey = nextRecordsSnapshotKey;
       state.recordsSnapshotReady = true;
       rebuildDataIndexes();
-      const shouldLoadFairness = !state.fairness.ready
+      const shouldLoadFairness = !settings.skipFairnessAutoLoad && (
+        !state.fairness.ready
         || state.fairness.testMode !== state.testMode
-        || (!settings.silent && previousRecordsSnapshotReady && previousRecordsSnapshotKey !== nextRecordsSnapshotKey);
+        || (!settings.silent && previousRecordsSnapshotReady && previousRecordsSnapshotKey !== nextRecordsSnapshotKey)
+      );
       state.scheduleYear = inferScheduleYear();
       state.scheduleView = normalizeScheduleView(state.scheduleView);
       state.scheduleDayCount = state.scheduleView === 'day'
@@ -3088,7 +3105,8 @@
       deleteRecord(id, {
         confirmMessage,
         loadingMessage: '移除臨時調派中...',
-        successMessage: '臨時調派已從月曆移除。'
+        successMessage: '臨時調派已從月曆移除。',
+        cancelMessage: '已取消移除臨時調派，未變更任何任務。'
       });
     }
 
@@ -4367,9 +4385,50 @@
       return nurse ? `${nurse.name || nurse.email}｜${nurse.email}` : nurseEmail;
     }
 
+    function setDispatchActionError(message, actionLabel) {
+      const normalizedMessage = message || '操作失敗。';
+      setStatus(normalizedMessage, 'error');
+      setRecordsStatus(`${actionLabel || '調派操作失敗'}：${normalizedMessage} 月曆與紀錄未變更。`, 'error');
+    }
+
+    function hasFairnessDataLoaded() {
+      return Boolean(
+        state.fairness.ready
+        || (Array.isArray(state.fairness.records) && state.fairness.records.length)
+        || (Array.isArray(state.fairness.stationStats) && state.fairness.stationStats.length)
+        || (Array.isArray(state.fairness.nurseStats) && state.fairness.nurseStats.length)
+      );
+    }
+
+    async function refreshViewsAfterMutation(successMessage, options) {
+      const settings = options || {};
+      const messagePrefix = String(successMessage || '調派已更新。').replace(/[。.]$/, '');
+      renderScheduleMatrix();
+      renderRecords();
+
+      if (hasFairnessDataLoaded()) {
+        setRecordsStatus(`${messagePrefix}，月曆已刷新，年度紀錄更新中...`, 'success');
+        const refreshed = await loadFairnessStats({
+          silent: true,
+          reason: settings.reason || 'mutation-refresh'
+        });
+        if (refreshed) {
+          renderRecords();
+          setRecordsStatus(`${messagePrefix}，月曆與年度紀錄已刷新：目前 ${formatNumber(state.fairness.records.length)} 筆｜${formatSyncClock(new Date())}`, 'success');
+        }
+      } else {
+        setRecordsStatus(`${messagePrefix}，月曆已刷新：目前 ${formatNumber(state.records.length)} 筆｜${formatSyncClock(new Date())}`, 'success');
+      }
+
+      showLoginNotice(`${messagePrefix}，月曆與紀錄已更新`);
+    }
+
     async function saveDispatch(event) {
       event.preventDefault();
-      if (state.isSaving) return;
+      if (state.isSaving) {
+        setStatus('正在儲存調派，請稍候。');
+        return;
+      }
 
       const station = getStationByCode(el.stationSelect.value);
       const isBatch = isStationBatchMode() && !el.recordId.value;
@@ -4379,39 +4438,39 @@
       const selectedNurses = isBatch ? getStationBatchCandidates() : (nurse ? [nurse] : []);
 
       if (!station || (!isBatch && !nurse)) {
-        setStatus('請選擇有效的駐站與護理師。', 'error');
+        setDispatchActionError('請選擇有效的駐站與護理師。', '調派未建立');
         return;
       }
       if (isBatch && !el.nurseOriginStation.value) {
-        setStatus('整個駐站調派請先選擇來源駐站。', 'error');
+        setDispatchActionError('整個駐站調派請先選擇來源駐站。', '調派未建立');
         return;
       }
       if (!selectedNurses.length) {
-        setStatus(isBatch ? '此來源駐站沒有可批次調派的人員。' : '請選擇有效的護理師。', 'error');
+        setDispatchActionError(isBatch ? '此來源駐站沒有可批次調派的人員。' : '請選擇有效的護理師。', '調派未建立');
         return;
       }
       const unavailableNurse = selectedNurses.find((item) => item.isUnavailable);
       if (unavailableNurse) {
-        setStatus(`${unavailableNurse.name || unavailableNurse.email} 目前狀態為「${unavailableNurse.status || '不可調配'}」，不得調派。`, 'error');
+        setDispatchActionError(`${unavailableNurse.name || unavailableNurse.email} 目前狀態為「${unavailableNurse.status || '不可調配'}」，不得調派。`, '調派未建立');
         return;
       }
       if (!el.dispatchStartDate.value || !el.dispatchEndDate.value) {
-        setStatus('請選擇調派起日與迄日。', 'error');
+        setDispatchActionError('請選擇調派起日與迄日。', '調派未建立');
         return;
       }
       if (el.dispatchEndDate.value < el.dispatchStartDate.value) {
-        setStatus('調派迄日不可早於調派起日。', 'error');
+        setDispatchActionError('調派迄日不可早於調派起日。', '調派未建立');
         return;
       }
       if (isExternalStation(station) || isMobileCaseMode()) {
         const blockedDates = getSundayToThursdayBlockedDates(el.dispatchStartDate.value, el.dispatchEndDate.value);
         if (blockedDates.length) {
           const modeLabel = isMobileCaseMode() ? '行動收案' : '委外駐站';
-          setStatus(`${modeLabel}僅可安排週日到週四，請移除週五或週六日期：${blockedDates.join('、')}`, 'error');
+          setDispatchActionError(`${modeLabel}僅可安排週日到週四，請移除週五或週六日期：${blockedDates.join('、')}`, '調派未建立');
           return;
         }
       } else if (!state.testMode && selectedNurses.some((item) => !isManagedSourceNurse(item))) {
-        setStatus('正常班只能調派自己管理範圍內的護理師。', 'error');
+        setDispatchActionError('正常班只能調派自己管理範圍內的護理師。', '調派未建立');
         return;
       }
 
@@ -4436,18 +4495,29 @@
 
       state.isSaving = true;
       el.saveBtn.disabled = true;
-      setStatus(isBatch ? '儲存整站調派中...' : '儲存中...');
+      const actionText = payload.id ? '調派更新' : '調派建立';
+      setStatus(isBatch ? '儲存整站調派中...' : `${actionText}中...`);
+      setRecordsStatus(`${actionText}中，完成後會刷新月曆與年度紀錄...`);
 
       try {
         const response = await callServer(isBatch ? 'saveWorkHourDispatchBatch' : 'saveWorkHourDispatch', payload);
         if (!response || !response.success) {
           throw new Error(response && response.message ? response.message : '儲存失敗。');
         }
-        applyData(response);
-        resetForm();
-        setStatus(isBatch ? `整站調派已儲存 ${formatNumber(response.createdCount || selectedNurses.length)} 人。` : '工時調派已儲存。', 'success');
+        const successMessage = isBatch
+          ? `整站調派已建立 ${formatNumber(response.createdCount || selectedNurses.length)} 人。`
+          : (payload.id ? '工時調派已更新。' : '工時調派已建立。');
+        applyData(response, {
+          reason: payload.id ? 'update-dispatch' : 'create-dispatch',
+          skipFairnessAutoLoad: true
+        });
+        resetForm({ preserveStatus: true });
+        setStatus(successMessage, 'success');
+        await refreshViewsAfterMutation(successMessage, {
+          reason: payload.id ? 'update-dispatch' : 'create-dispatch'
+        });
       } catch (error) {
-        setStatus(error && error.message ? error.message : '儲存失敗。', 'error');
+        setDispatchActionError(error && error.message ? error.message : '儲存失敗。', payload && payload.id ? '調派更新失敗' : '調派建立失敗');
       } finally {
         state.isSaving = false;
         el.saveBtn.disabled = false;
@@ -4510,17 +4580,29 @@
     }
 
     async function deleteRecord(id, options) {
-      if (state.isDeletingRecord) return;
+      if (state.isDeletingRecord) {
+        setStatus('正在處理刪除，請稍候。');
+        return;
+      }
       const settings = options || {};
       const record = getRecordById(id);
-      if (!record) return;
+      if (!record) {
+        setDispatchActionError('找不到要刪除的調派紀錄，請重新整理後再試。', '刪除失敗');
+        return;
+      }
       const confirmMessage = settings.confirmMessage
         || `確定刪除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的工時調派？`;
       const confirmed = window.confirm(confirmMessage);
-      if (!confirmed) return;
+      if (!confirmed) {
+        const cancelMessage = settings.cancelMessage || '已取消刪除，未變更任何調派。';
+        setStatus(cancelMessage, 'success');
+        setRecordsStatus(`${cancelMessage} 月曆與紀錄未變更。`, 'success');
+        return;
+      }
 
       state.isDeletingRecord = true;
       setStatus(settings.loadingMessage || '刪除中...');
+      setRecordsStatus('調派移除中，完成後會刷新月曆與年度紀錄...');
       try {
         const response = await callServer('deleteWorkHourDispatch', {
           id,
@@ -4531,17 +4613,25 @@
         if (!response || !response.success) {
           throw new Error(response && response.message ? response.message : '刪除失敗。');
         }
-        applyData(response);
-        resetForm();
-        setStatus(settings.successMessage || '工時調派已刪除。', 'success');
+        const successMessage = settings.successMessage || '工時調派已刪除。';
+        applyData(response, {
+          reason: 'delete-dispatch',
+          skipFairnessAutoLoad: true
+        });
+        resetForm({ preserveStatus: true });
+        setStatus(successMessage, 'success');
+        await refreshViewsAfterMutation(successMessage, {
+          reason: 'delete-dispatch'
+        });
       } catch (error) {
-        setStatus(error && error.message ? error.message : '刪除失敗。', 'error');
+        setDispatchActionError(error && error.message ? error.message : '刪除失敗。', '刪除失敗');
       } finally {
         state.isDeletingRecord = false;
       }
     }
 
-    function resetForm() {
+    function resetForm(options) {
+      const settings = options || {};
       el.recordId.value = '';
       el.recordVersion.value = '';
       el.formTitle.textContent = '新增工時調派';
@@ -4568,7 +4658,9 @@
       updateDispatchRuleNote();
       applyShiftDefaults(true);
       renderRecords();
-      setStatus('');
+      if (!settings.preserveStatus) {
+        setStatus(settings.statusMessage || '', settings.statusType || '');
+      }
     }
 
     function collectFilters() {
