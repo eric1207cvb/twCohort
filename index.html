@@ -871,6 +871,7 @@
     .station-color-21 { background: #6d28d9; }
 
     .schedule-cell {
+      position: relative;
       vertical-align: top;
       background: #fff;
       min-height: 58px;
@@ -1055,6 +1056,58 @@
       font-weight: 800;
       color: #991b1b;
       word-break: break-word;
+    }
+
+    .movement-entry-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 7px;
+    }
+
+    .movement-entry-text {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .movement-entry-actions {
+      flex: 0 0 auto;
+    }
+
+    .schedule-cell-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 6px;
+      opacity: 0.35;
+      transition: opacity 0.15s ease;
+    }
+
+    .schedule-cell:hover .schedule-cell-actions,
+    .schedule-cell:focus-within .schedule-cell-actions {
+      opacity: 1;
+    }
+
+    .schedule-action-btn,
+    .movement-action-btn {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #fff;
+      min-height: 22px;
+      padding: 2px 7px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    .schedule-action-btn {
+      color: var(--primary-strong);
+    }
+
+    .movement-action-btn {
+      border-color: #fecaca;
+      background: #fff7f7;
+      color: var(--danger);
     }
 
     .schedule-entry {
@@ -1905,6 +1958,7 @@
       el.scheduleToday.addEventListener('click', () => setScheduleDate(getTodayString()));
       el.scheduleYearLoad.addEventListener('click', loadScheduleYear);
       el.printScheduleBtn.addEventListener('click', () => window.print());
+      el.scheduleBody.addEventListener('click', handleScheduleBodyClick);
       window.addEventListener('resize', scheduleResponsiveDayRefresh);
       el.filterDateFrom.addEventListener('change', () => {
         if (state.scheduleView === 'day') {
@@ -2997,6 +3051,77 @@
       if (state.scheduleView === 'day') setScheduleDate(state.scheduleDate || getTodayString());
     }
 
+    function handleScheduleBodyClick(event) {
+      const addButton = event.target.closest('[data-schedule-add]');
+      if (addButton && el.scheduleBody.contains(addButton)) {
+        event.preventDefault();
+        event.stopPropagation();
+        prepareScheduleDispatch(
+          addButton.getAttribute('data-schedule-station'),
+          addButton.getAttribute('data-schedule-start'),
+          addButton.getAttribute('data-schedule-end')
+        );
+        return;
+      }
+
+      const deleteButton = event.target.closest('[data-schedule-delete]');
+      if (deleteButton && el.scheduleBody.contains(deleteButton)) {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteScheduleTemporaryRecord(deleteButton.getAttribute('data-schedule-delete'));
+      }
+    }
+
+    function prepareScheduleDispatch(stationCode, rangeStart, rangeEnd) {
+      const station = getStationByCode(stationCode);
+      const startDate = normalizeDateInput(rangeStart);
+      const endDate = normalizeDateInput(rangeEnd) || startDate;
+      if (!station || !startDate || !endDate) {
+        setStatus('無法帶入月曆格資料，請重新整理後再試。', 'error');
+        return;
+      }
+      if (isEditingRecord()) {
+        const confirmed = window.confirm('目前正在修改既有調派。要放棄修改並改為新增一筆調派嗎？');
+        if (!confirmed) return;
+      }
+
+      resetForm();
+      el.dispatchTargetMode.value = 'single';
+      el.dispatchStartDate.value = startDate;
+      el.dispatchEndDate.value = endDate;
+      el.stationSelect.value = station.code;
+      syncStationPicker();
+      renderOriginStationOptions();
+      renderFormNurseOptions();
+      updateDispatchTargetModeUi();
+      updateDispatchRuleNote();
+      updateStationActionButtons();
+      closeStationPicker();
+      const rangeText = startDate === endDate ? formatFullDate(startDate) : `${formatFullDate(startDate)} 至 ${formatFullDate(endDate)}`;
+      setStatus(`已帶入 ${getStationDisplayName(station)}｜${rangeText}，請選擇來源駐站與護理師後新增調派。`, 'success');
+      el.dispatchPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function deleteScheduleTemporaryRecord(id) {
+      const record = getRecordById(id);
+      const temporaryInfo = getTemporaryDispatchInfo(record);
+      if (!record || !temporaryInfo.isTemporary) {
+        setStatus('找不到這筆臨時調派，請重新整理月曆後再試。', 'error');
+        return;
+      }
+
+      const confirmMessage = [
+        `確定從月曆移除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的臨時調派？`,
+        `原：${getRecordOriginalStationDisplayName(record)}`,
+        `至：${getRecordTargetStationDisplayName(record)}`
+      ].join('\n');
+      deleteRecord(id, {
+        confirmMessage,
+        loadingMessage: '移除臨時調派中...',
+        successMessage: '臨時調派已從月曆移除。'
+      });
+    }
+
     async function loadFairnessStats(options) {
       if (!state.viewer || state.fairness.isLoading) return false;
       const settings = options || {};
@@ -3304,10 +3429,11 @@
         ? `人數 ${formatNumber(baseCount)}`
         : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
       const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, dateString, dateString);
+      const actionHtml = buildScheduleAddActionHtml(stationCode, dateString, dateString);
 
       return {
         className,
-        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}`
+        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}${actionHtml}`
       };
     }
 
@@ -3436,10 +3562,11 @@
         ? `人數 ${formatNumber(baseCount)}`
         : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
       const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, week.start, week.end);
+      const actionHtml = buildScheduleAddActionHtml(stationCode, week.start, week.end);
 
       return {
         className,
-        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}`
+        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}${actionHtml}`
       };
     }
 
@@ -3468,6 +3595,23 @@
 
     function buildRelatedStationTextHtml(prefix, stationName) {
       return `<span>${escapeHtml(prefix)}：${escapeHtml(stationName || '未命名駐站')}</span>`;
+    }
+
+    function buildScheduleAddActionHtml(stationCode, rangeStart, rangeEnd) {
+      if (!stationCode || !rangeStart || !rangeEnd) return '';
+      return `
+        <div class="schedule-cell-actions">
+          <button
+            class="schedule-action-btn"
+            type="button"
+            data-schedule-add="1"
+            data-schedule-station="${escapeHtml(stationCode)}"
+            data-schedule-start="${escapeHtml(rangeStart)}"
+            data-schedule-end="${escapeHtml(rangeEnd)}"
+            title="帶入此駐站與日期新增調派"
+          >新增</button>
+        </div>
+      `;
     }
 
     function buildTemporaryStationGroupTitleHtml(stationCode, stationName) {
@@ -3640,7 +3784,7 @@
         const targetStationName = getRecordTargetStationDisplayName(record);
         const key = [
           isIncoming ? 'in' : 'out',
-          record.assignmentKey || record.nurseEmail || '',
+          record.id || record.assignmentKey || record.nurseEmail || '',
           isIncoming ? sourceStationCode : record.stationCode
         ].join('::');
 
@@ -3659,6 +3803,7 @@
             direction: isIncoming ? '+1 調入' : '-1 調出',
             className: isIncoming ? 'movement-in' : 'movement-out',
             nurseName: record.nurseName || record.nurseEmail || '',
+            recordId: record.id || '',
             sourceStationName,
             targetStationName,
             ranges: [],
@@ -3714,11 +3859,27 @@
       const relatedLineHtml = relatedHtml
         ? `<div class="cell-sub">${relatedHtml}</div>`
         : '';
+      const actionHtml = group.recordId
+        ? `
+          <div class="movement-entry-actions">
+            <button
+              class="movement-action-btn"
+              type="button"
+              data-schedule-delete="${escapeHtml(group.recordId)}"
+              title="移除這筆臨時調派"
+            >移除</button>
+          </div>
+        `
+        : '';
       return `
         <div class="${group.isIncoming ? 'movement-group-item' : ''}">
-          <div>${escapeHtml(mainText)}</div>
-          <div class="cell-sub">${escapeHtml(formatDispatchStats(group.days, group.hours))}</div>
-          ${relatedLineHtml}
+          <div class="movement-entry-row">
+            <div class="movement-entry-text">
+              <div>${escapeHtml(mainText)}</div>
+              ${relatedLineHtml}
+            </div>
+            ${actionHtml}
+          </div>
         </div>
       `;
     }
@@ -3893,6 +4054,8 @@
     function getRecordById(id) {
       return state.recordById.get(id)
         || getDisplayedRecords().find((record) => record && record.id === id)
+        || (state.scheduleRecords || []).find((record) => record && record.id === id)
+        || (state.currentRecords || []).find((record) => record && record.id === id)
         || null;
     }
 
@@ -4362,15 +4525,18 @@
       `;
     }
 
-    async function deleteRecord(id) {
+    async function deleteRecord(id, options) {
       if (state.isDeletingRecord) return;
+      const settings = options || {};
       const record = getRecordById(id);
       if (!record) return;
-      const confirmed = window.confirm(`確定刪除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的工時調派？`);
+      const confirmMessage = settings.confirmMessage
+        || `確定刪除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的工時調派？`;
+      const confirmed = window.confirm(confirmMessage);
       if (!confirmed) return;
 
       state.isDeletingRecord = true;
-      setStatus('刪除中...');
+      setStatus(settings.loadingMessage || '刪除中...');
       try {
         const response = await callServer('deleteWorkHourDispatch', {
           id,
@@ -4383,7 +4549,7 @@
         }
         applyData(response);
         resetForm();
-        setStatus('工時調派已刪除。', 'success');
+        setStatus(settings.successMessage || '工時調派已刪除。', 'success');
       } catch (error) {
         setStatus(error && error.message ? error.message : '刪除失敗。', 'error');
       } finally {
