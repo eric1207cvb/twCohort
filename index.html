@@ -1663,6 +1663,7 @@
       isSaving: false,
       isCreatingStation: false,
       isDeletingStation: false,
+      isDeletingRecord: false,
       stationModalType: 'general',
       testMode: false,
       scheduleView: 'day',
@@ -1713,7 +1714,7 @@
     const RESPONSIVE_DAY_MAX_COUNT = 7;
     const STATION_CODE_PREFIX = 'GRP-CO-';
     const EXTERNAL_STATION_CODE_PREFIX = 'GRP-CO-EX-';
-    const RECORDS_AUTO_REFRESH_MS = 30000;
+    const RECORDS_AUTO_REFRESH_MS = 45000;
     const STATION_COLOR_CLASS_COUNT = 22;
 
     // 北到南排序，月曆、駐站下拉與護理師清單共用。
@@ -2328,8 +2329,22 @@
       state.recordsAutoRefreshTimer = window.setInterval(() => refreshRecordsNow('auto'), RECORDS_AUTO_REFRESH_MS);
     }
 
+    function isEditingRecord() {
+      return Boolean(el.recordId && el.recordId.value);
+    }
+
     async function refreshRecordsNow(reason) {
-      if (!state.viewer || state.isLoadingData || state.isAutoRefreshing || state.isSaving || state.isCreatingStation || state.isDeletingStation) return;
+      if (
+        !state.viewer
+        || state.isLoadingData
+        || state.isAutoRefreshing
+        || state.isSaving
+        || state.isCreatingStation
+        || state.isDeletingStation
+        || state.isDeletingRecord
+        || state.fairness.isLoading
+        || isEditingRecord()
+      ) return;
       if (reason === 'auto' && document.hidden) return;
       state.isAutoRefreshing = true;
       try {
@@ -4348,11 +4363,13 @@
     }
 
     async function deleteRecord(id) {
+      if (state.isDeletingRecord) return;
       const record = getRecordById(id);
       if (!record) return;
       const confirmed = window.confirm(`確定刪除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的工時調派？`);
       if (!confirmed) return;
 
+      state.isDeletingRecord = true;
       setStatus('刪除中...');
       try {
         const response = await callServer('deleteWorkHourDispatch', {
@@ -4369,6 +4386,8 @@
         setStatus('工時調派已刪除。', 'success');
       } catch (error) {
         setStatus(error && error.message ? error.message : '刪除失敗。', 'error');
+      } finally {
+        state.isDeletingRecord = false;
       }
     }
 

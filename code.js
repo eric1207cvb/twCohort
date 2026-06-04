@@ -7,6 +7,12 @@ const APP_CONFIG = {
   externalStationCodePrefix: 'GRP-CO-EX-',
   stationManagerTitle: '駐站管理員',
   storeKey: 'stationNurseWorkHours:v1',
+  sourceCacheKey: 'stationNurseDispatchSource:v1',
+  recordsCacheKey: 'stationNurseWorkHours:records:v1',
+  cacheMaxChars: 90000,
+  sourceCacheSeconds: 120,
+  recordsCacheSeconds: 45,
+  writeLockWaitMs: 30000,
   chunkSize: 8000,
   maxRecords: 3000,
   defaultRangeDays: 31,
@@ -184,10 +190,10 @@ function saveWorkHourDispatch(payload) {
       throw new Error('無法辨識目前登入帳號。');
     }
 
-    lock.waitLock(10000);
+    acquireDispatchWriteLock_(lock);
     hasLock = true;
 
-    const source = loadDispatchSource_();
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
@@ -241,6 +247,8 @@ function saveWorkHourDispatch(payload) {
       normalized.assignmentKey,
       previousAssignmentKey
     ]);
+    lock.releaseLock();
+    hasLock = false;
     return getDispatchAppData(payload && payload.filters ? payload.filters : {});
   } catch (error) {
     console.error('儲存工時調派失敗:', error);
@@ -263,14 +271,14 @@ function saveWorkHourDispatchBatch(payload) {
       throw new Error('無法辨識目前登入帳號。');
     }
 
-    lock.waitLock(10000);
+    acquireDispatchWriteLock_(lock);
     hasLock = true;
 
     if (payload && payload.id) {
       throw new Error('整個駐站調派只能用於新增，不可用於修改既有紀錄。');
     }
 
-    const source = loadDispatchSource_();
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
@@ -306,6 +314,8 @@ function saveWorkHourDispatchBatch(payload) {
     records.unshift(...pendingRecords);
     saveStoredDispatchRecords_(records);
     syncTemporaryDispatchColumn_(source, records, normalizedRecords.map((record) => record.assignmentKey));
+    lock.releaseLock();
+    hasLock = false;
 
     const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
     response.createdCount = pendingRecords.length;
@@ -331,7 +341,7 @@ function deleteWorkHourDispatch(payload) {
       throw new Error('無法辨識目前登入帳號。');
     }
 
-    lock.waitLock(10000);
+    acquireDispatchWriteLock_(lock);
     hasLock = true;
 
     const id = String(payload && payload.id || '').trim();
@@ -339,7 +349,7 @@ function deleteWorkHourDispatch(payload) {
       throw new Error('缺少調派紀錄 ID。');
     }
 
-    const source = loadDispatchSource_();
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
@@ -365,6 +375,8 @@ function deleteWorkHourDispatch(payload) {
 
     saveStoredDispatchRecords_(records);
     syncTemporaryDispatchColumn_(source, records, [records[targetIndex].assignmentKey]);
+    lock.releaseLock();
+    hasLock = false;
     return getDispatchAppData(payload && payload.filters ? payload.filters : {});
   } catch (error) {
     console.error('刪除工時調派失敗:', error);
@@ -387,10 +399,10 @@ function createStation(payload) {
       throw new Error('無法辨識目前登入帳號。');
     }
 
-    lock.waitLock(10000);
+    acquireDispatchWriteLock_(lock);
     hasLock = true;
 
-    const source = loadDispatchSource_();
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
@@ -398,6 +410,9 @@ function createStation(payload) {
     const normalized = normalizeCreateStationPayload_(payload, source);
     appendStationRecord_(source.orgSheet, normalized);
     ensureStationManagerAssignment_(source.assignmentSheet, source.assignments, normalized);
+    invalidateDispatchSourceCache_();
+    lock.releaseLock();
+    hasLock = false;
 
     const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
     response.createdStation = {
@@ -427,10 +442,10 @@ function deleteStation(payload) {
       throw new Error('無法辨識目前登入帳號。');
     }
 
-    lock.waitLock(10000);
+    acquireDispatchWriteLock_(lock);
     hasLock = true;
 
-    const source = loadDispatchSource_();
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
@@ -442,6 +457,9 @@ function deleteStation(payload) {
     assertCanDeleteStation_(source, stationCode);
     deleteStationOrgRows_(source.orgSheet, stationCode);
     deleteStationManagerAssignmentRows_(source.assignmentSheet, stationCode);
+    invalidateDispatchSourceCache_();
+    lock.releaseLock();
+    hasLock = false;
 
     const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
     response.deletedStationCode = stationCode;
@@ -457,7 +475,16 @@ function deleteStation(payload) {
   }
 }
 
-function loadDispatchSource_() {
+function loadDispatchSource_(options) {
+  const settings = options || {};
+  const includeSheets = Boolean(settings.includeSheets);
+  const forceFresh = Boolean(settings.forceFresh);
+
+  if (!includeSheets && !forceFresh) {
+    const cachedSource = getCachedDispatchSource_();
+    if (cachedSource) return cachedSource;
+  }
+
   const spreadsheet = getDispatchSourceSpreadsheet_();
   const personnelSheet = getPersonnelSheet_(spreadsheet);
   const assignmentSheet = getAssignmentSheet_(spreadsheet);
@@ -466,25 +493,47 @@ function loadDispatchSource_() {
   const personnelByEmail = new Map(personnel.map((person) => [person.email, person]));
   const assignments = readAssignmentRecords_(assignmentSheet, personnelByEmail);
   const orgStations = orgSheet ? readStationRecords_(orgSheet) : [];
-  const stations = mergeStationsWithAssignmentGroups_(orgStations, assignments);
-
-  if (stations.length === 0) {
-    return {
-      orgSheet,
-      assignmentSheet,
-      personnelByEmail,
-      assignments,
-      stations: deriveStationsFromAssignments_(assignments)
-    };
-  }
-
-  return {
-    orgSheet,
-    assignmentSheet,
+  const mergedStations = mergeStationsWithAssignmentGroups_(orgStations, assignments);
+  const stations = mergedStations.length ? mergedStations : deriveStationsFromAssignments_(assignments);
+  const source = {
+    personnel,
     personnelByEmail,
     assignments,
     stations
   };
+
+  if (includeSheets) {
+    source.orgSheet = orgSheet;
+    source.assignmentSheet = assignmentSheet;
+  } else {
+    putCachedDispatchSource_(source);
+  }
+
+  return source;
+}
+
+function getCachedDispatchSource_() {
+  const cached = getCachedJson_(APP_CONFIG.sourceCacheKey);
+  if (!cached || !Array.isArray(cached.assignments) || !Array.isArray(cached.stations)) return null;
+
+  const personnel = Array.isArray(cached.personnel) ? cached.personnel : [];
+  return {
+    personnel,
+    personnelByEmail: new Map(personnel.map((person) => [person.email, person])),
+    assignments: cached.assignments,
+    stations: cached.stations
+  };
+}
+
+function putCachedDispatchSource_(source) {
+  const personnel = Array.isArray(source.personnel)
+    ? source.personnel
+    : Array.from(source.personnelByEmail.values());
+  putCachedJson_(APP_CONFIG.sourceCacheKey, {
+    personnel,
+    assignments: source.assignments || [],
+    stations: source.stations || []
+  }, APP_CONFIG.sourceCacheSeconds);
 }
 
 function getDispatchSourceSpreadsheet_() {
@@ -510,6 +559,61 @@ function getEnvString_(key, fallback) {
   if (typeof ENV === 'undefined' || !key || typeof ENV[key] === 'undefined') return fallback;
   const value = String(ENV[key] || '').trim();
   return value || fallback;
+}
+
+function getScriptCache_() {
+  try {
+    return CacheService.getScriptCache();
+  } catch (error) {
+    console.error('讀取快取服務失敗:', error);
+    return null;
+  }
+}
+
+function getCachedJson_(key) {
+  const cache = getScriptCache_();
+  if (!cache || !key) return null;
+
+  const raw = cache.get(key);
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error(`解析快取資料失敗：${key}`, error);
+    return null;
+  }
+}
+
+function putCachedJson_(key, value, ttlSeconds) {
+  const cache = getScriptCache_();
+  if (!cache || !key || !ttlSeconds) return;
+
+  const raw = JSON.stringify(value);
+  if (raw.length > APP_CONFIG.cacheMaxChars) return;
+  cache.put(key, raw, ttlSeconds);
+}
+
+function removeCachedValue_(key) {
+  const cache = getScriptCache_();
+  if (!cache || !key) return;
+  cache.remove(key);
+}
+
+function invalidateDispatchSourceCache_() {
+  removeCachedValue_(APP_CONFIG.sourceCacheKey);
+}
+
+function invalidateDispatchRecordsCache_() {
+  removeCachedValue_(APP_CONFIG.recordsCacheKey);
+}
+
+function acquireDispatchWriteLock_(lock) {
+  try {
+    lock.waitLock(APP_CONFIG.writeLockWaitMs);
+  } catch (error) {
+    throw new Error('目前有其他管理者正在儲存資料，請稍候幾秒後再試。系統已避免多人同時寫入造成資料覆蓋。');
+  }
 }
 
 function getSheetByNameOrNull_(spreadsheet, sheetName) {
@@ -1602,13 +1706,16 @@ function syncTemporaryDispatchColumn_(source, records, assignmentKeys) {
   }
 
   const assignmentsByKey = new Map((source.assignments || []).map((assignment) => [assignment.assignmentKey, assignment]));
+  let didWrite = false;
   keys.forEach((assignmentKey) => {
     const assignment = assignmentsByKey.get(assignmentKey);
     if (!assignment || !assignment.rowIndex) return;
 
     const value = buildTemporaryDispatchCellValue_(records, assignmentKey);
     sheet.getRange(Number(assignment.rowIndex), temporaryDispatchIndex + 1).setValue(value);
+    didWrite = true;
   });
+  if (didWrite) invalidateDispatchSourceCache_();
 }
 
 function buildTemporaryDispatchCellValue_(records, assignmentKey) {
@@ -1650,9 +1757,17 @@ function buildTemporaryDispatchCellValue_(records, assignmentKey) {
 }
 
 function getStoredDispatchRecords_() {
+  const cachedRecords = getCachedJson_(APP_CONFIG.recordsCacheKey);
+  if (Array.isArray(cachedRecords)) {
+    return cachedRecords
+      .map(normalizeStoredDispatchRecord_)
+      .filter(Boolean);
+  }
+
   const records = getScriptJsonStore_(APP_CONFIG.storeKey)
     .map(normalizeStoredDispatchRecord_)
     .filter(Boolean);
+  putCachedJson_(APP_CONFIG.recordsCacheKey, records, APP_CONFIG.recordsCacheSeconds);
   return records;
 }
 
@@ -1663,6 +1778,8 @@ function saveStoredDispatchRecords_(records) {
     .sort(compareDispatchRecords_)
     .slice(0, APP_CONFIG.maxRecords);
   setScriptJsonStore_(APP_CONFIG.storeKey, normalized, APP_CONFIG.maxRecords);
+  invalidateDispatchRecordsCache_();
+  putCachedJson_(APP_CONFIG.recordsCacheKey, normalized, APP_CONFIG.recordsCacheSeconds);
 }
 
 function normalizeStoredDispatchRecord_(record) {
