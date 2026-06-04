@@ -763,6 +763,55 @@
       word-break: break-word;
     }
 
+    .dispatch-target-choice-list {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+      padding: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      max-height: 142px;
+      overflow: auto;
+    }
+
+    .dispatch-target-choice {
+      border: 1px solid #bae6fd;
+      border-radius: 4px;
+      background: #fff;
+      color: #0f172a;
+      padding: 5px 8px;
+      font-size: 0.82rem;
+      font-weight: 900;
+      line-height: 1.35;
+      max-width: 100%;
+      word-break: break-word;
+    }
+
+    .dispatch-target-choice.is-selected {
+      border-color: #0284c7;
+      background: #e0f2fe;
+      color: #075985;
+      box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.14);
+    }
+
+    .dispatch-target-choice.is-selected::before {
+      content: "✓ ";
+    }
+
+    .dispatch-target-choice.is-unavailable {
+      border-color: #fed7aa;
+      background: #fff7ed;
+      color: #92400e;
+    }
+
+    .dispatch-target-choice-empty {
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
     .dispatch-target-excluded {
       color: #92400e;
       font-size: 0.78rem;
@@ -1454,15 +1503,16 @@
                 </div>
                 <input id="dispatch-target-mode" type="hidden" value="single">
                 <div class="dispatch-target-toggle" role="radiogroup" aria-label="調派對象">
-                  <button class="btn dispatch-target-btn is-active" type="button" data-dispatch-target-mode="single" aria-pressed="true">單一</button>
+                  <button class="btn dispatch-target-btn is-active" type="button" data-dispatch-target-mode="single" aria-pressed="true">自選</button>
                   <button class="btn dispatch-target-btn" type="button" data-dispatch-target-mode="station" aria-pressed="false">整站</button>
                 </div>
               </div>
             </div>
             <div class="dispatch-target-preview hidden" id="dispatch-target-preview"></div>
             <div class="field" id="nurse-select-field">
-              <label for="nurse-select">主職護理師</label>
-              <select id="nurse-select" required></select>
+              <label>自選護理師</label>
+              <input id="nurse-select" type="hidden">
+              <div class="dispatch-target-choice-list" id="nurse-choice-list"></div>
             </div>
             <div class="field">
               <label for="station-picker-button">調派駐站</label>
@@ -1739,6 +1789,7 @@
       nurseByAssignmentKey: new Map(),
       nurseByEmail: new Map(),
       nurseListsByStation: new Map(),
+      selectedAssignmentKeys: new Set(),
       sourceStations: [],
       recordById: new Map(),
       scheduleLabelByCode: new Map(),
@@ -1894,6 +1945,7 @@
         'dispatch-target-summary',
         'dispatch-target-preview',
         'nurse-select-field',
+        'nurse-choice-list',
         'station-select',
         'station-picker',
         'station-picker-button',
@@ -2012,6 +2064,7 @@
       document.querySelectorAll('[data-dispatch-target-mode]').forEach((button) => {
         button.addEventListener('click', () => selectDispatchTargetMode(button.getAttribute('data-dispatch-target-mode')));
       });
+      el.nurseChoiceList.addEventListener('click', handleNurseChoiceClick);
       document.querySelectorAll('[data-shift-mode]').forEach((button) => {
         button.addEventListener('click', () => selectDispatchMode(button.getAttribute('data-shift-mode')));
       });
@@ -2719,25 +2772,101 @@
     }
 
     function renderFormNurseOptions() {
-      const selectedAssignmentKey = el.nurseSelect.value || '';
       const targetStation = getStationByCode(el.stationSelect.value);
       const nurses = getFormNurseCandidates(targetStation);
-      const hasAvailableNurses = nurses.some((nurse) => !nurse.isUnavailable);
-      el.nurseSelect.innerHTML = nurses.length
-        ? [
-          hasAvailableNurses ? '' : '<option value="">此原駐站沒有可調派的收案人員</option>',
-          ...nurses.map((nurse) => (
-            `<option class="${nurse.isUnavailable ? 'nurse-option-unavailable' : ''}" value="${escapeHtml(nurse.assignmentKey)}" ${nurse.isUnavailable ? 'disabled' : ''}>${escapeHtml(formatNurseOptionLabel(nurse))}</option>`
-          ))
-        ].join('')
-        : '<option value="">此原駐站沒有可調派的收案人員</option>';
-      if (selectedAssignmentKey && nurses.some((nurse) => nurse.assignmentKey === selectedAssignmentKey && !nurse.isUnavailable)) {
-        el.nurseSelect.value = selectedAssignmentKey;
+      const availableKeys = new Set(nurses
+        .filter((nurse) => !nurse.isUnavailable)
+        .map((nurse) => nurse.assignmentKey));
+      const selectedKeys = getSelectedAssignmentKeys()
+        .filter((assignmentKey) => availableKeys.has(assignmentKey));
+      setSelectedAssignmentKeys(selectedKeys);
+
+      if (!nurses.length) {
+        el.nurseChoiceList.innerHTML = '<div class="dispatch-target-choice-empty">此來源駐站沒有可調派的收案人員。</div>';
+      } else {
+        const isEditing = Boolean(el.recordId && el.recordId.value);
+        el.nurseChoiceList.innerHTML = nurses.map((nurse) => {
+          const isSelected = state.selectedAssignmentKeys.has(nurse.assignmentKey);
+          const isDisabled = nurse.isUnavailable || (isEditing && !isSelected);
+          const label = nurse.name || nurse.email || '未命名人員';
+          const statusText = isEditing && !isSelected
+            ? '（修改模式限原人員）'
+            : (nurse.isUnavailable
+              ? `（${nurse.status || nurse.availabilityLabel || '不可調派'}）`
+              : '');
+          return `
+            <button
+              class="dispatch-target-choice ${isSelected ? 'is-selected' : ''} ${isDisabled ? 'is-unavailable' : ''}"
+              type="button"
+              data-nurse-choice="${escapeHtml(nurse.assignmentKey)}"
+              aria-pressed="${isSelected ? 'true' : 'false'}"
+              title="${escapeHtml(getNurseOptionLabel(nurse))}"
+              ${isDisabled ? 'disabled' : ''}
+            >${escapeHtml(label)}${escapeHtml(statusText)}</button>
+          `;
+        }).join('');
       }
       el.nurseSelect.title = nurses.some((nurse) => nurse.isUnavailable)
         ? '育嬰、留停等狀態人員已標記且不可調派。'
         : '';
       updateDispatchTargetModeUi();
+    }
+
+    function handleNurseChoiceClick(event) {
+      const button = event.target.closest('[data-nurse-choice]');
+      if (!button || !el.nurseChoiceList.contains(button) || button.disabled) return;
+      const assignmentKey = String(button.getAttribute('data-nurse-choice') || '').trim();
+      if (!assignmentKey) return;
+
+      const selectedKeys = new Set(getSelectedAssignmentKeys());
+      if (selectedKeys.has(assignmentKey)) {
+        selectedKeys.delete(assignmentKey);
+      } else {
+        selectedKeys.add(assignmentKey);
+      }
+      setSelectedAssignmentKeys(Array.from(selectedKeys));
+      maybePromoteSelfSelectionToStation();
+      renderFormNurseOptions();
+      updateDispatchTargetModeUi();
+    }
+
+    function getSelectedAssignmentKeys() {
+      return Array.from(state.selectedAssignmentKeys || [])
+        .map((assignmentKey) => String(assignmentKey || '').trim())
+        .filter(Boolean);
+    }
+
+    function setSelectedAssignmentKeys(assignmentKeys) {
+      state.selectedAssignmentKeys = new Set((Array.isArray(assignmentKeys) ? assignmentKeys : [assignmentKeys])
+        .map((assignmentKey) => String(assignmentKey || '').trim())
+        .filter(Boolean));
+      el.nurseSelect.value = Array.from(state.selectedAssignmentKeys).join(',');
+    }
+
+    function getSelectedNurseCandidates() {
+      const selectedKeys = new Set(getSelectedAssignmentKeys());
+      if (!selectedKeys.size) return [];
+      return getFormNurseCandidates(getStationByCode(el.stationSelect.value))
+        .filter((nurse) => selectedKeys.has(nurse.assignmentKey) && !nurse.isUnavailable);
+    }
+
+    function maybePromoteSelfSelectionToStation() {
+      if (el.recordId.value || isStationBatchMode()) return false;
+      const originStationCode = el.nurseOriginStation.value || '';
+      if (!originStationCode) return false;
+      const stationCandidates = getStationBatchCandidates();
+      const stationKeys = stationCandidates.map((nurse) => nurse.assignmentKey);
+      const selectedKeys = new Set(getSelectedAssignmentKeys());
+      const hasSelectedWholeStation = stationKeys.length > 0
+        && selectedKeys.size === stationKeys.length
+        && stationKeys.every((assignmentKey) => selectedKeys.has(assignmentKey));
+      if (!hasSelectedWholeStation) return false;
+
+      setSelectedAssignmentKeys([]);
+      el.dispatchTargetMode.value = 'station';
+      renderOriginStationOptions(originStationCode);
+      setStatus(`已選取來源駐站全部 ${formatNumber(stationCandidates.length)} 人，自動切換為整站調派。`, 'success');
+      return true;
     }
 
     function selectDispatchTargetMode(mode) {
@@ -2748,6 +2877,7 @@
         return;
       }
       el.dispatchTargetMode.value = nextMode;
+      if (nextMode === 'station') setSelectedAssignmentKeys([]);
       renderOriginStationOptions();
       renderFormNurseOptions();
       updateDispatchTargetModeUi();
@@ -2771,7 +2901,7 @@
       });
 
       el.nurseSelectField.classList.toggle('hidden', isBatch);
-      el.nurseSelect.required = !isBatch;
+      el.nurseSelect.required = false;
       el.dispatchTargetSummary.textContent = buildDispatchTargetSummary();
       renderDispatchTargetPreview();
       updateSaveButtonText();
@@ -2816,7 +2946,9 @@
 
     function buildDispatchTargetSummary() {
       if (!isStationBatchMode()) {
-        return el.recordId.value ? '修改' : '';
+        const selectedCount = getSelectedAssignmentKeys().length;
+        if (el.recordId.value) return selectedCount ? `修改 ${formatNumber(selectedCount)} 人` : '修改';
+        return selectedCount ? `自選 ${formatNumber(selectedCount)} 人` : '未選';
       }
 
       const originStationCode = el.nurseOriginStation.value || '';
@@ -2858,7 +2990,12 @@
         el.saveBtn.textContent = '儲存修改';
         return;
       }
-      el.saveBtn.textContent = isStationBatchMode() ? '新增整站調派' : '新增調派';
+      const selectedCount = getSelectedAssignmentKeys().length;
+      if (isStationBatchMode()) {
+        el.saveBtn.textContent = '新增整站調派';
+        return;
+      }
+      el.saveBtn.textContent = selectedCount > 1 ? '新增自選調派' : '新增調派';
     }
 
     function getFormNurseCandidates(targetStation) {
@@ -4432,12 +4569,12 @@
 
       const station = getStationByCode(el.stationSelect.value);
       const isBatch = isStationBatchMode() && !el.recordId.value;
-      const nurse = isBatch
-        ? null
-        : state.nurseByAssignmentKey.get(el.nurseSelect.value);
-      const selectedNurses = isBatch ? getStationBatchCandidates() : (nurse ? [nurse] : []);
+      const selectedNurses = isBatch ? getStationBatchCandidates() : getSelectedNurseCandidates();
+      const nurse = !isBatch && selectedNurses.length === 1 ? selectedNurses[0] : null;
+      const isSelfBatch = !isBatch && !el.recordId.value && selectedNurses.length > 1;
+      const shouldUseBatchSave = isBatch || isSelfBatch;
 
-      if (!station || (!isBatch && !nurse)) {
+      if (!station || (!isBatch && !selectedNurses.length)) {
         setDispatchActionError('請選擇有效的駐站與護理師。', '調派未建立');
         return;
       }
@@ -4447,6 +4584,10 @@
       }
       if (!selectedNurses.length) {
         setDispatchActionError(isBatch ? '此來源駐站沒有可批次調派的人員。' : '請選擇有效的護理師。', '調派未建立');
+        return;
+      }
+      if (el.recordId.value && selectedNurses.length !== 1) {
+        setDispatchActionError('修改既有調派時只能選擇一位護理師。', '調派更新失敗');
         return;
       }
       const unavailableNurse = selectedNurses.find((item) => item.isUnavailable);
@@ -4482,8 +4623,8 @@
         workDate: el.dispatchStartDate.value,
         stationCode: station.code,
         assignmentKey: nurse ? nurse.assignmentKey : '',
-        assignmentKeys: isBatch ? selectedNurses.map((item) => item.assignmentKey) : [],
-        dispatchTargetMode: isBatch ? 'station' : 'single',
+        assignmentKeys: shouldUseBatchSave ? selectedNurses.map((item) => item.assignmentKey) : [],
+        dispatchTargetMode: isBatch ? 'station' : (isSelfBatch ? 'custom' : 'single'),
         shiftName: el.shiftName.value,
         startTime: '',
         endTime: '',
@@ -4500,13 +4641,13 @@
       setRecordsStatus(`${actionText}中，完成後會刷新月曆與年度紀錄...`);
 
       try {
-        const response = await callServer(isBatch ? 'saveWorkHourDispatchBatch' : 'saveWorkHourDispatch', payload);
+        const response = await callServer(shouldUseBatchSave ? 'saveWorkHourDispatchBatch' : 'saveWorkHourDispatch', payload);
         if (!response || !response.success) {
           throw new Error(response && response.message ? response.message : '儲存失敗。');
         }
         const successMessage = isBatch
           ? `整站調派已建立 ${formatNumber(response.createdCount || selectedNurses.length)} 人。`
-          : (payload.id ? '工時調派已更新。' : '工時調派已建立。');
+          : (isSelfBatch ? `自選調派已建立 ${formatNumber(response.createdCount || selectedNurses.length)} 人。` : (payload.id ? '工時調派已更新。' : '工時調派已建立。'));
         applyData(response, {
           reason: payload.id ? 'update-dispatch' : 'create-dispatch',
           skipFairnessAutoLoad: true
@@ -4542,9 +4683,9 @@
       el.shiftName.value = normalizeDispatchMode(record.shiftName || state.shiftOptions[0]);
       renderShiftOptions();
       renderOriginStationOptions(record.originalStationCode || '');
+      setSelectedAssignmentKeys([record.assignmentKey]);
       renderFormNurseOptions();
       updateDispatchTargetModeUi();
-      el.nurseSelect.value = record.assignmentKey;
       el.startTime.value = '';
       el.endTime.value = '';
       el.hoursInput.value = getRecordWorkHours(record);
@@ -4647,6 +4788,7 @@
       el.dispatchStartDate.value = getDefaultDispatchDate();
       el.dispatchEndDate.value = el.dispatchStartDate.value;
       el.nurseOriginStation.value = '';
+      setSelectedAssignmentKeys([]);
       const orderedStations = getOrderedStations();
       if (orderedStations[0]) el.stationSelect.value = orderedStations[0].code;
       syncStationPicker();
