@@ -9,9 +9,13 @@ const APP_CONFIG = {
   storeKey: 'stationNurseWorkHours:v1',
   sourceCacheKey: 'stationNurseDispatchSource:v1',
   recordsCacheKey: 'stationNurseWorkHours:records:v1',
+  holidayCacheKey: 'stationNurseOfficialHolidays:v1',
+  holidayDatasetCsvUrl: 'https://data.ntpc.gov.tw/api/datasets/308dcd75-6434-45bc-a95f-584da4fed251/csv/file',
+  holidayDatasetPageUrl: 'https://data.gov.tw/dataset/123662',
   cacheMaxChars: 90000,
   sourceCacheSeconds: 120,
   recordsCacheSeconds: 45,
+  holidayCacheSeconds: 43200,
   writeLockWaitMs: 30000,
   chunkSize: 8000,
   maxRecords: 3000,
@@ -25,6 +29,8 @@ const APP_CONFIG = {
   unavailableStatusKeywords: ['育嬰', '留停', '留職停薪', '停薪', '留職', '停職', '休職'],
   shiftOptions: ['正常班', '行動收案']
 };
+
+let officialHolidayDatasetRowsCache_ = null;
 
 const FIELD_ALIASES = {
   email: ['信箱', '電子信箱', '電子郵件', 'Email', 'email', '使用者信箱', '帳號'],
@@ -94,6 +100,7 @@ function getDispatchAppData(payload) {
       includeOriginalStation: true,
       assignmentAvailabilityByKey
     });
+    const holidayCalendar = loadOfficialHolidayCalendarForRange_(filters.dateFrom, filters.dateTo);
 
     return {
       success: true,
@@ -103,6 +110,8 @@ function getDispatchAppData(payload) {
       records,
       scheduleRecords,
       currentRecords,
+      holidays: holidayCalendar.holidays,
+      holidaySource: holidayCalendar.source,
       filters,
       shiftOptions: APP_CONFIG.shiftOptions.slice(),
       managerCandidates: buildStationManagerCandidates_(source)
@@ -121,6 +130,8 @@ function getDispatchAppData(payload) {
       records: [],
       scheduleRecords: [],
       currentRecords: [],
+      holidays: {},
+      holidaySource: buildOfficialHolidaySourceInfo_({ available: false }),
       filters: normalizeDispatchFilters_(payload),
       shiftOptions: APP_CONFIG.shiftOptions.slice(),
       managerCandidates: [],
@@ -738,6 +749,204 @@ function invalidateDispatchSourceCache_() {
 
 function invalidateDispatchRecordsCache_() {
   removeCachedValue_(APP_CONFIG.recordsCacheKey);
+}
+
+function loadOfficialHolidayCalendarForRange_(dateFrom, dateTo) {
+  const holidays = {};
+  const years = getOfficialHolidayYearsForRange_(dateFrom, dateTo);
+
+  try {
+    years.forEach((year) => {
+      loadOfficialHolidayCalendarForYear_(year).forEach((entry) => {
+        if (dateFrom && entry.date < dateFrom) return;
+        if (dateTo && entry.date > dateTo) return;
+        holidays[entry.date] = entry;
+      });
+    });
+
+    return {
+      holidays,
+      source: buildOfficialHolidaySourceInfo_({
+        available: true,
+        years,
+        count: Object.keys(holidays).length
+      })
+    };
+  } catch (error) {
+    console.error('讀取政府行政機關辦公日曆失敗:', error);
+    return {
+      holidays: {},
+      source: buildOfficialHolidaySourceInfo_({
+        available: false,
+        years,
+        message: error && error.message ? error.message : '無法讀取政府行政機關辦公日曆。'
+      })
+    };
+  }
+}
+
+function loadOfficialHolidayCalendarForYear_(year) {
+  const normalizedYear = Number(year || 0);
+  if (!Number.isInteger(normalizedYear) || normalizedYear < 1900 || normalizedYear > 2200) return [];
+
+  const cacheKey = `${APP_CONFIG.holidayCacheKey}:${normalizedYear}`;
+  const cached = getCachedJson_(cacheKey);
+  if (Array.isArray(cached)) return cached;
+
+  const rows = getOfficialHolidayDatasetRows_();
+  const entries = parseOfficialHolidayEntriesForYear_(rows, normalizedYear);
+  putCachedJson_(cacheKey, entries, APP_CONFIG.holidayCacheSeconds);
+  return entries;
+}
+
+function getOfficialHolidayDatasetRows_() {
+  if (Array.isArray(officialHolidayDatasetRowsCache_)) return officialHolidayDatasetRowsCache_;
+
+  const url = getEnvString_('DISPATCH_HOLIDAY_DATA_URL', APP_CONFIG.holidayDatasetCsvUrl);
+  const response = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    followRedirects: true
+  });
+  const statusCode = response.getResponseCode();
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error(`政府行政機關辦公日曆下載失敗（HTTP ${statusCode}）。`);
+  }
+
+  const csvText = response.getContentText('UTF-8').replace(/^\uFEFF/, '');
+  const rows = Utilities.parseCsv(csvText);
+  if (!Array.isArray(rows) || rows.length < 2) {
+    throw new Error('政府行政機關辦公日曆資料格式異常。');
+  }
+
+  officialHolidayDatasetRowsCache_ = rows;
+  return rows;
+}
+
+function parseOfficialHolidayEntriesForYear_(rows, year) {
+  const headers = (rows[0] || []).map((header) => String(header || '').replace(/^\uFEFF/, '').trim());
+  const dateIndex = findHeaderIndex_(headers, ['date', '日期'], 0);
+  const yearIndex = findHeaderIndex_(headers, ['year', '西元年', '年度'], 1);
+  const nameIndex = findHeaderIndex_(headers, ['name', '節日', '紀念日節日名稱'], 2);
+  const holidayIndex = findHeaderIndex_(headers, ['isholiday', 'isHoliday', '是否放假'], 3);
+  const categoryIndex = findHeaderIndex_(headers, ['holidaycategory', 'holidayCategory', '假別', '放假類別'], 4);
+  const descriptionIndex = findHeaderIndex_(headers, ['description', '備註', '說明', '放假說明'], 5);
+
+  return rows.slice(1)
+    .map((row) => {
+      const date = normalizeOfficialHolidayDate_(row[dateIndex]);
+      if (!date || Number(date.slice(0, 4)) !== year) return null;
+      const rowYear = Number(String(row[yearIndex] || '').trim() || year);
+      if (Number.isFinite(rowYear) && rowYear && rowYear !== year) return null;
+
+      const name = normalizeOfficialHolidayText_(row[nameIndex]);
+      const category = normalizeOfficialHolidayText_(row[categoryIndex]);
+      const description = normalizeOfficialHolidayText_(row[descriptionIndex]);
+      const isHoliday = parseOfficialHolidayFlag_(row[holidayIndex]);
+      const rowText = [name, category, description].filter(Boolean).join(' ');
+      const isPlainWeekend = /星期六、星期日|週末|周末/.test(category) && !name;
+      const isMakeupWorkday = !isHoliday && /補行上班|補班|調整上班|上班日/.test(rowText);
+      const isObservedHoliday = isHoliday && !isPlainWeekend && Boolean(
+        name
+        || /補假|調整放假|放假之紀念日|特定節日|國定|節日|紀念日|放假/.test(category)
+        || /補假|放假/.test(description)
+      );
+
+      if (!isMakeupWorkday && !isObservedHoliday) return null;
+
+      const kind = getOfficialHolidayKind_(isMakeupWorkday, category);
+      return {
+        date,
+        year,
+        name,
+        category,
+        description,
+        label: getOfficialHolidayLabel_(name, category, description, kind),
+        isHoliday,
+        isMakeupWorkday,
+        kind
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function getOfficialHolidayYearsForRange_(dateFrom, dateTo) {
+  const todayYear = Number(getTodayDateString_().slice(0, 4));
+  const fromYear = getYearFromDateString_(dateFrom) || todayYear;
+  const toYear = getYearFromDateString_(dateTo) || fromYear;
+  const startYear = Math.min(fromYear, toYear);
+  const endYear = Math.max(fromYear, toYear);
+  const cappedEndYear = Math.min(endYear, startYear + 10);
+  const years = [];
+
+  for (let year = startYear; year <= cappedEndYear; year += 1) {
+    years.push(year);
+  }
+  return years.length ? years : [todayYear];
+}
+
+function buildOfficialHolidaySourceInfo_(options) {
+  const settings = options || {};
+  return {
+    name: '政府行政機關辦公日曆表',
+    provider: '政府資料開放平臺',
+    url: APP_CONFIG.holidayDatasetPageUrl,
+    csvUrl: getEnvString_('DISPATCH_HOLIDAY_DATA_URL', APP_CONFIG.holidayDatasetCsvUrl),
+    available: Boolean(settings.available),
+    years: Array.isArray(settings.years) ? settings.years : [],
+    count: Number(settings.count || 0),
+    message: String(settings.message || '').trim()
+  };
+}
+
+function getOfficialHolidayKind_(isMakeupWorkday, category) {
+  if (isMakeupWorkday) return 'makeup-workday';
+  if (/補假/.test(category)) return 'observed-holiday';
+  if (/調整放假/.test(category)) return 'adjusted-holiday';
+  if (/特定節日/.test(category)) return 'special-holiday';
+  return 'holiday';
+}
+
+function getOfficialHolidayLabel_(name, category, description, kind) {
+  if (name) return name;
+  if (kind === 'makeup-workday') return '補班';
+  if (kind === 'observed-holiday') return '補假';
+  if (kind === 'adjusted-holiday') return '調整放假';
+  if (/放假之紀念日/.test(category)) return '國定假日';
+  if (/特定節日/.test(category)) return '特定節日';
+  return category || description || '休假';
+}
+
+function normalizeOfficialHolidayDate_(value) {
+  const raw = String(value || '').trim().replace(/^\uFEFF/, '');
+  if (/^\d{8}$/.test(raw)) {
+    return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  }
+
+  const match = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!match) return '';
+  const year = match[1];
+  const month = String(Number(match[2])).padStart(2, '0');
+  const day = String(Number(match[3])).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeOfficialHolidayText_(value) {
+  return String(value || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseOfficialHolidayFlag_(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === '是' || raw === 'true' || raw === '1' || raw === 'yes' || raw === 'y';
+}
+
+function getYearFromDateString_(value) {
+  const raw = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return 0;
+  return Number(raw.slice(0, 4));
 }
 
 function acquireDispatchWriteLock_(lock) {
