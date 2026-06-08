@@ -4442,7 +4442,28 @@
     function buildMovementEntryHtml(group) {
       return `
         <div class="movement-out-line">
-          ${buildMovementEntryInnerHtml(group, buildRelatedStationTextHtml('至', group.targetStationName))}
+          ${buildMovementPlainTextEntryHtml(group, buildRelatedStationTextHtml('至', group.targetStationName))}
+        </div>
+      `;
+    }
+
+    function buildMovementPlainTextEntryHtml(group, relatedHtml) {
+      const dateText = group.recordStartDate
+        ? formatDateRange(group.recordStartDate, group.recordEndDate || group.recordStartDate)
+        : formatRangeList(group.ranges);
+      const mainText = `${dateText} ${group.direction} ${group.nurseName}`;
+      const relatedLineHtml = relatedHtml
+        ? `<div class="cell-sub">${relatedHtml}</div>`
+        : '';
+      const actionHtml = buildMovementActionHtml(group);
+
+      return `
+        <div class="movement-entry-row">
+          <div class="movement-entry-text">
+            <div>${escapeHtml(mainText)}</div>
+            ${relatedLineHtml}
+          </div>
+          ${actionHtml}
         </div>
       `;
     }
@@ -4455,6 +4476,23 @@
       const relatedLineHtml = relatedHtml
         ? `<div class="cell-sub">${relatedHtml}</div>`
         : '';
+      const actionHtml = buildMovementActionHtml(group);
+      return `
+        <div class="${group.isIncoming ? 'movement-group-item' : ''}">
+          <div class="${buildMovementTaskClassName(group)}">
+            <div class="movement-entry-row">
+              <div class="movement-entry-text">
+                <div>${escapeHtml(mainText)}</div>
+                ${relatedLineHtml}
+              </div>
+              ${actionHtml}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildMovementActionHtml(group) {
       const assignActionHtml = group.recordId && group.showAssignAction
         ? `
           <button
@@ -4478,19 +4516,7 @@
       const actionHtml = assignActionHtml || deleteActionHtml
         ? `<div class="movement-entry-actions">${assignActionHtml}${deleteActionHtml}</div>`
         : '';
-      return `
-        <div class="${group.isIncoming ? 'movement-group-item' : ''}">
-          <div class="${buildMovementTaskClassName(group)}">
-            <div class="movement-entry-row">
-              <div class="movement-entry-text">
-                <div>${escapeHtml(mainText)}</div>
-                ${relatedLineHtml}
-              </div>
-              ${actionHtml}
-            </div>
-          </div>
-        </div>
-      `;
+      return actionHtml;
     }
 
     function buildMovementTaskClassName(group) {
