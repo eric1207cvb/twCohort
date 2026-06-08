@@ -2952,12 +2952,12 @@
         ? preferredValue
         : (el.nurseOriginStation.value || '');
       const targetStation = getStationByCode(el.stationSelect.value);
-      const useCrossStationSources = isPendingAssignmentMode() || isExternalStation(targetStation) || isMobileCaseMode();
+      const useCrossStationSources = canUseCrossStationDispatchSources(targetStation);
       const sourceStations = useCrossStationSources
         ? getAllNurseSourceStations()
         : getOrderedStations();
       el.nurseOriginStation.innerHTML = [
-        `<option value="">${(isStationBatchMode() || isPendingAssignmentMode()) ? '請選擇來源駐站' : (useCrossStationSources ? '全部駐站' : '全部原駐站')}</option>`,
+        `<option value="">請選擇來源駐站</option>`,
         ...sourceStations.map((station) => (
           `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
         ))
@@ -3319,10 +3319,17 @@
 
     function getFormNurseCandidates(targetStation) {
       const originStationCode = el.nurseOriginStation.value || '';
-      const nurses = getNursesForStation(originStationCode);
-      if (state.testMode || isExternalStation(targetStation) || isMobileCaseMode()) return nurses;
+      return getNursesForStation(originStationCode);
+    }
 
-      return nurses.filter((nurse) => state.managedStationCodeSet.has(nurse.orgCode));
+    function canUseCrossStationDispatchSources(targetStation) {
+      return Boolean(
+        state.testMode
+        || (state.viewer && state.viewer.isStationManager)
+        || isPendingAssignmentMode()
+        || isExternalStation(targetStation)
+        || isMobileCaseMode()
+      );
     }
 
     function getAllNurseSourceStations() {
@@ -5892,7 +5899,7 @@
         el.dispatchRuleNote.textContent = '委外駐站僅可安排週日到週四，並可從各駐站選擇護理師。';
         return;
       }
-      el.dispatchRuleNote.textContent = '正常班沿用目前管理範圍規則。';
+      el.dispatchRuleNote.textContent = '目標駐站仍限自己管理範圍；來源護理師可跨駐站調派，並會套用重疊與 30 天間隔規則。';
     }
 
     function normalizeDispatchMode(value) {
@@ -5908,10 +5915,6 @@
         station.isExternal
         || String(station.code || '').toUpperCase().indexOf(EXTERNAL_STATION_CODE_PREFIX) === 0
       ));
-    }
-
-    function isManagedSourceNurse(nurse) {
-      return Boolean(nurse && state.managedStationCodeSet.has(nurse.orgCode));
     }
 
     function getSundayToThursdayBlockedDates(startDate, endDate) {
