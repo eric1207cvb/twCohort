@@ -3648,6 +3648,13 @@
         const message = error && error.message ? error.message : '指派失敗。';
         setPendingAssignmentStatus(message, 'error');
         setRecordsStatus(`待指派需求指派失敗：${message} 月曆與紀錄未變更。`, 'error');
+        const refreshed = await refreshViewsAfterFailedMutation(message, '待指派需求指派失敗', {
+          reason: 'assign-pending-dispatch-conflict'
+        });
+        if (refreshed) {
+          closePendingAssignmentModal(true);
+          setStatus('待指派需求已同步最新狀態，請依月曆重新選擇。', 'error');
+        }
       } finally {
         state.isAssigningPendingRecord = false;
         setButtonBusy(el.pendingAssignmentSaveBtn, false, '確認指派');
@@ -5221,6 +5228,56 @@
       setRecordsStatus(`${actionLabel || '調派操作失敗'}：${normalizedMessage} 月曆與紀錄未變更。`, 'error');
     }
 
+    function isMutationConflictMessage(message) {
+      const text = String(message || '');
+      if (!text) return false;
+      return [
+        '不是最新版本',
+        '已由',
+        '已取消的班表',
+        '找不到要',
+        '請先按「重新整理」',
+        '已經有確定人選',
+        '重疊期間不可重複調派',
+        '臨時調派間隔未滿',
+        '目前有其他管理者正在儲存資料'
+      ].some((keyword) => text.includes(keyword));
+    }
+
+    async function refreshViewsAfterFailedMutation(message, actionLabel, options) {
+      const normalizedMessage = message || '操作失敗。';
+      const label = actionLabel || '調派操作失敗';
+      const settings = options || {};
+      if (!isMutationConflictMessage(normalizedMessage)) return false;
+
+      setRecordsStatus(`${label}：${normalizedMessage} 正在同步最新月曆與紀錄...`, 'error');
+      const refreshed = await loadData(collectFilters(), {
+        silent: true,
+        reason: settings.reason || 'mutation-conflict-refresh',
+        skipFairnessAutoLoad: true
+      });
+
+      if (!refreshed) {
+        setRecordsStatus(`${label}：${normalizedMessage} 自動同步失敗，請手動重新整理後再操作。`, 'error');
+        return false;
+      }
+
+      if (settings.resetFormOnRefresh) {
+        resetForm({ preserveStatus: true });
+      }
+      if (hasFairnessDataLoaded()) {
+        await loadFairnessStats({
+          silent: true,
+          reason: settings.reason || 'mutation-conflict-refresh'
+        });
+      }
+      renderScheduleMatrix();
+      renderRecords();
+      setRecordsStatus(`${label}：${normalizedMessage} 已同步最新月曆與紀錄，請依最新畫面重新操作。`, 'error');
+      showLoginNotice('偵測到其他管理者異動，月曆與紀錄已同步');
+      return true;
+    }
+
     function hasFairnessDataLoaded() {
       return Boolean(
         state.fairness.ready
@@ -5361,7 +5418,13 @@
           reason: isPending ? 'create-pending-dispatch' : (payload.id ? 'update-dispatch' : 'create-dispatch')
         });
       } catch (error) {
-        setDispatchActionError(error && error.message ? error.message : '儲存失敗。', payload && payload.id ? '調派更新失敗' : '調派建立失敗');
+        const message = error && error.message ? error.message : '儲存失敗。';
+        const actionLabel = payload && payload.id ? '調派更新失敗' : '調派建立失敗';
+        setDispatchActionError(message, actionLabel);
+        await refreshViewsAfterFailedMutation(message, actionLabel, {
+          reason: payload && payload.id ? 'update-dispatch-conflict' : 'create-dispatch-conflict',
+          resetFormOnRefresh: Boolean(payload && payload.id)
+        });
       } finally {
         state.isSaving = false;
         setButtonBusy(el.saveBtn, false, saveButtonLabel);
@@ -5471,7 +5534,12 @@
           reason: 'delete-dispatch'
         });
       } catch (error) {
-        setDispatchActionError(error && error.message ? error.message : '刪除失敗。', '刪除失敗');
+        const message = error && error.message ? error.message : '刪除失敗。';
+        setDispatchActionError(message, '刪除失敗');
+        await refreshViewsAfterFailedMutation(message, '刪除失敗', {
+          reason: 'delete-dispatch-conflict',
+          resetFormOnRefresh: true
+        });
       } finally {
         state.isDeletingRecord = false;
         hideBusy();
