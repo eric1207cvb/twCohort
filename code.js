@@ -64,6 +64,18 @@ function getCurrentUserEmail() {
   }
 }
 
+function authorizeOfficialHolidayCalendar() {
+  const rows = getOfficialHolidayDatasetRows_();
+  const currentYear = Number(getTodayDateString_().slice(0, 4));
+  const currentYearEntries = parseOfficialHolidayEntriesForYear_(rows, currentYear);
+  const source = buildOfficialHolidaySourceInfo_({
+    available: true,
+    years: [currentYear],
+    count: currentYearEntries.length
+  });
+  return `官方假日資料授權成功：${source.provider}「${source.name}」已可讀取，${currentYear} 年目前 ${currentYearEntries.length} 筆提示日期。`;
+}
+
 function getDispatchAppData(payload) {
   const viewerEmail = normalizeEmail_(getCurrentUserEmail());
 
