@@ -7,8 +7,10 @@ const APP_CONFIG = {
   externalStationCodePrefix: 'GRP-CO-EX-',
   stationManagerTitle: '駐站管理員',
   storeKey: 'stationNurseWorkHours:v1',
+  testStoreKey: 'stationNurseWorkHours:test:v1',
   sourceCacheKey: 'stationNurseDispatchSource:v1',
   recordsCacheKey: 'stationNurseWorkHours:records:v1',
+  testRecordsCacheKey: 'stationNurseWorkHours:records:test:v1',
   holidayCacheKey: 'stationNurseOfficialHolidays:v1',
   holidayDatasetCsvUrl: 'https://data.ntpc.gov.tw/api/datasets/308dcd75-6434-45bc-a95f-584da4fed251/csv/file',
   holidayDatasetPageUrl: 'https://data.gov.tw/dataset/123662',
@@ -92,6 +94,7 @@ function getDispatchAppData(payload) {
     const allowedStationCodes = new Set(context.stations.map((station) => station.code));
     const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
     const records = loadDispatchRecords_(allowedStationCodes, filters, {
+      testMode: context.viewer.testMode,
       assignmentAvailabilityByKey
     });
     const scheduleRecords = loadDispatchRecords_(allowedStationCodes, {
@@ -99,6 +102,7 @@ function getDispatchAppData(payload) {
       stationCode: '',
       nurseEmail: ''
     }, {
+      testMode: context.viewer.testMode,
       includeOriginalStation: true,
       assignmentAvailabilityByKey
     });
@@ -109,6 +113,7 @@ function getDispatchAppData(payload) {
       stationCode: '',
       nurseEmail: ''
     }, {
+      testMode: context.viewer.testMode,
       includeOriginalStation: true,
       assignmentAvailabilityByKey
     });
@@ -179,6 +184,7 @@ function getDispatchFairnessStats(payload) {
       stationCode: '',
       nurseEmail: filters.nurseEmail
     }, {
+      testMode: context.viewer.testMode,
       includeOriginalStation: true,
       assignmentAvailabilityByKey
     })
@@ -224,7 +230,7 @@ function saveWorkHourDispatch(payload) {
       testMode: Boolean(payload && payload.testMode)
     });
     const normalized = normalizeWorkHourPayload_(payload, context, viewerEmail);
-    const records = getStoredDispatchRecords_();
+    const records = getStoredDispatchRecords_(context);
     const existingIndex = normalized.id
       ? records.findIndex((record) => record.id === normalized.id && record.status === '有效')
       : -1;
@@ -268,14 +274,14 @@ function saveWorkHourDispatch(payload) {
       });
     }
 
-    saveStoredDispatchRecords_(records);
+    saveStoredDispatchRecords_(records, context);
     syncTemporaryDispatchColumn_(source, records, [
       normalized.assignmentKey,
       previousAssignmentKey
-    ]);
+    ], context);
     lock.releaseLock();
     hasLock = false;
-    return getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    return getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
   } catch (error) {
     console.error('儲存工時調派失敗:', error);
     return {
@@ -318,7 +324,7 @@ function saveWorkHourDispatchBatch(payload) {
       id: '',
       assignmentKey
     }, context, viewerEmail));
-    const records = getStoredDispatchRecords_();
+    const records = getStoredDispatchRecords_(context);
     const now = formatTimestamp_(new Date());
     const pendingRecords = [];
 
@@ -338,12 +344,12 @@ function saveWorkHourDispatchBatch(payload) {
     });
 
     records.unshift(...pendingRecords);
-    saveStoredDispatchRecords_(records);
-    syncTemporaryDispatchColumn_(source, records, normalizedRecords.map((record) => record.assignmentKey));
+    saveStoredDispatchRecords_(records, context);
+    syncTemporaryDispatchColumn_(source, records, normalizedRecords.map((record) => record.assignmentKey), context);
     lock.releaseLock();
     hasLock = false;
 
-    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    const response = getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
     response.createdCount = pendingRecords.length;
     return response;
   } catch (error) {
@@ -379,7 +385,7 @@ function savePendingWorkHourDispatch(payload) {
       testMode: Boolean(payload && payload.testMode)
     });
     const normalized = normalizePendingWorkHourPayload_(payload, source, context, viewerEmail);
-    const records = getStoredDispatchRecords_();
+    const records = getStoredDispatchRecords_(context);
     assertNoDuplicatePendingDispatchDemand_(normalized, records);
     const now = formatTimestamp_(new Date());
 
@@ -394,11 +400,11 @@ function savePendingWorkHourDispatch(payload) {
       status: '有效'
     });
 
-    saveStoredDispatchRecords_(records);
+    saveStoredDispatchRecords_(records, context);
     lock.releaseLock();
     hasLock = false;
 
-    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    const response = getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
     response.createdCount = 1;
     return response;
   } catch (error) {
@@ -434,7 +440,7 @@ function assignPendingWorkHourDispatch(payload) {
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
-    const records = getStoredDispatchRecords_();
+    const records = getStoredDispatchRecords_(context);
     const targetIndex = records.findIndex((record) => record.id === id && record.status === '有效');
     if (targetIndex < 0) {
       const inactiveRecord = records.find((record) => record.id === id);
@@ -469,12 +475,12 @@ function assignPendingWorkHourDispatch(payload) {
       status: '有效'
     };
 
-    saveStoredDispatchRecords_(records);
-    syncTemporaryDispatchColumn_(source, records, [normalized.assignmentKey]);
+    saveStoredDispatchRecords_(records, context);
+    syncTemporaryDispatchColumn_(source, records, [normalized.assignmentKey], context);
     lock.releaseLock();
     hasLock = false;
 
-    return getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    return getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
   } catch (error) {
     console.error('指派待指派調派需求失敗:', error);
     return {
@@ -508,7 +514,7 @@ function deleteWorkHourDispatch(payload) {
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
-    const records = getStoredDispatchRecords_();
+    const records = getStoredDispatchRecords_(context);
     const targetIndex = records.findIndex((record) => record.id === id && record.status === '有效');
     if (targetIndex < 0) {
       const inactiveRecord = records.find((record) => record.id === id);
@@ -523,11 +529,11 @@ function deleteWorkHourDispatch(payload) {
     assertDispatchRecordVersion_(deletedRecord, payload, '刪除', source);
     records.splice(targetIndex, 1);
 
-    saveStoredDispatchRecords_(records);
-    syncTemporaryDispatchColumn_(source, records, [deletedRecord.assignmentKey]);
+    saveStoredDispatchRecords_(records, context);
+    syncTemporaryDispatchColumn_(source, records, [deletedRecord.assignmentKey], context);
     lock.releaseLock();
     hasLock = false;
-    return getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    return getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
   } catch (error) {
     console.error('刪除工時調派失敗:', error);
     return {
@@ -564,7 +570,7 @@ function createStation(payload) {
     lock.releaseLock();
     hasLock = false;
 
-    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    const response = getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
     response.createdStation = {
       code: normalized.code,
       name: normalized.alias || normalized.name,
@@ -611,7 +617,7 @@ function deleteStation(payload) {
     lock.releaseLock();
     hasLock = false;
 
-    const response = getDispatchAppData(payload && payload.filters ? payload.filters : {});
+    const response = getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
     response.deletedStationCode = stationCode;
     return response;
   } catch (error) {
@@ -756,6 +762,7 @@ function invalidateDispatchSourceCache_() {
 
 function invalidateDispatchRecordsCache_() {
   removeCachedValue_(APP_CONFIG.recordsCacheKey);
+  removeCachedValue_(APP_CONFIG.testRecordsCacheKey);
 }
 
 function loadOfficialHolidayCalendarForRange_(dateFrom, dateTo) {
@@ -1847,8 +1854,15 @@ function normalizeDispatchFilters_(payload) {
   };
 }
 
+function buildDispatchRefreshPayload_(payload, context) {
+  return {
+    ...((payload && payload.filters && typeof payload.filters === 'object') ? payload.filters : {}),
+    testMode: Boolean(context && context.viewer && context.viewer.testMode)
+  };
+}
+
 function loadDispatchRecords_(allowedStationCodes, filters, options) {
-  return getStoredDispatchRecords_()
+  return getStoredDispatchRecords_(options)
     .filter((record) => {
       if (record.status !== '有效') return false;
       if (allowedStationCodes) {
@@ -2200,8 +2214,9 @@ function buildLegacyDispatchRecordVersion_(record) {
   ].map((value) => String(value || '').trim()).join('|');
 }
 
-function syncTemporaryDispatchColumn_(source, records, assignmentKeys) {
+function syncTemporaryDispatchColumn_(source, records, assignmentKeys, options) {
   if (typeof ENV !== 'undefined' && ENV.SYNC_TEMPORARY_DISPATCH_COLUMN === false) return;
+  if (isTestDispatchRecordStore_(options)) return;
   if (!source || !source.assignmentSheet) return;
 
   const keys = Array.from(new Set((assignmentKeys || [])
@@ -2264,30 +2279,46 @@ function buildTemporaryDispatchCellValue_(records, assignmentKey) {
   return summaryLines.concat(detailLines).join('\n');
 }
 
-function getStoredDispatchRecords_() {
-  const cachedRecords = getCachedJson_(APP_CONFIG.recordsCacheKey);
+function getStoredDispatchRecords_(options) {
+  const store = getDispatchRecordStoreKeys_(options);
+  const cachedRecords = getCachedJson_(store.recordsCacheKey);
   if (Array.isArray(cachedRecords)) {
     return normalizeActiveStoredDispatchRecords_(cachedRecords);
   }
 
-  const normalizedRecords = getScriptJsonStore_(APP_CONFIG.storeKey)
+  const normalizedRecords = getScriptJsonStore_(store.storeKey)
     .map(normalizeStoredDispatchRecord_)
     .filter(Boolean);
   const records = normalizedRecords.filter(isActiveStoredDispatchRecord_);
   if (records.length !== normalizedRecords.length) {
-    setScriptJsonStore_(APP_CONFIG.storeKey, records, APP_CONFIG.maxRecords);
+    setScriptJsonStore_(store.storeKey, records, APP_CONFIG.maxRecords);
   }
-  putCachedJson_(APP_CONFIG.recordsCacheKey, records, APP_CONFIG.recordsCacheSeconds);
+  putCachedJson_(store.recordsCacheKey, records, APP_CONFIG.recordsCacheSeconds);
   return records;
 }
 
-function saveStoredDispatchRecords_(records) {
+function saveStoredDispatchRecords_(records, options) {
+  const store = getDispatchRecordStoreKeys_(options);
   const normalized = normalizeActiveStoredDispatchRecords_(records)
     .sort(compareDispatchRecords_)
     .slice(0, APP_CONFIG.maxRecords);
-  setScriptJsonStore_(APP_CONFIG.storeKey, normalized, APP_CONFIG.maxRecords);
-  invalidateDispatchRecordsCache_();
-  putCachedJson_(APP_CONFIG.recordsCacheKey, normalized, APP_CONFIG.recordsCacheSeconds);
+  setScriptJsonStore_(store.storeKey, normalized, APP_CONFIG.maxRecords);
+  removeCachedValue_(store.recordsCacheKey);
+  putCachedJson_(store.recordsCacheKey, normalized, APP_CONFIG.recordsCacheSeconds);
+}
+
+function getDispatchRecordStoreKeys_(options) {
+  const testMode = isTestDispatchRecordStore_(options);
+  return {
+    storeKey: testMode ? APP_CONFIG.testStoreKey : APP_CONFIG.storeKey,
+    recordsCacheKey: testMode ? APP_CONFIG.testRecordsCacheKey : APP_CONFIG.recordsCacheKey
+  };
+}
+
+function isTestDispatchRecordStore_(options) {
+  if (!options) return false;
+  if (options.viewer && options.viewer.testMode) return true;
+  return Boolean(options.testMode);
 }
 
 function normalizeStoredDispatchRecord_(record) {
