@@ -8,6 +8,8 @@ const APP_CONFIG = {
   stationManagerTitle: '駐站管理員',
   storeKey: 'stationNurseWorkHours:v1',
   testStoreKey: 'stationNurseWorkHours:test:v1',
+  testStationsStoreKey: 'stationNurseStations:test:v1',
+  testHiddenStationCodesStoreKey: 'stationNurseStations:hidden:test:v1',
   sourceCacheKey: 'stationNurseDispatchSource:v1',
   recordsCacheKey: 'stationNurseWorkHours:records:v1',
   testRecordsCacheKey: 'stationNurseWorkHours:records:test:v1',
@@ -563,10 +565,15 @@ function createStation(payload) {
       testMode: Boolean(payload && payload.testMode)
     });
     assertCanCreateStation_(context);
-    const normalized = normalizeCreateStationPayload_(payload, source);
-    appendStationRecord_(source.orgSheet, normalized);
-    ensureStationManagerAssignment_(source.assignmentSheet, source.assignments, normalized);
-    invalidateDispatchSourceCache_();
+    const effectiveSource = context.viewer.testMode ? applyTestStationOverrides_(source) : source;
+    const normalized = normalizeCreateStationPayload_(payload, effectiveSource);
+    if (context.viewer.testMode) {
+      createTestStationRecord_(source, normalized);
+    } else {
+      appendStationRecord_(source.orgSheet, normalized);
+      ensureStationManagerAssignment_(source.assignmentSheet, source.assignments, normalized);
+      invalidateDispatchSourceCache_();
+    }
     lock.releaseLock();
     hasLock = false;
 
@@ -609,11 +616,16 @@ function deleteStation(payload) {
     if (!stationCode) {
       throw new Error('請選擇要刪除的駐站。');
     }
+    const effectiveSource = context.viewer.testMode ? applyTestStationOverrides_(source) : source;
     assertCanManageStation_(context, stationCode);
-    assertCanDeleteStation_(source, stationCode);
-    deleteStationOrgRows_(source.orgSheet, stationCode);
-    deleteStationManagerAssignmentRows_(source.assignmentSheet, stationCode);
-    invalidateDispatchSourceCache_();
+    assertCanDeleteStation_(effectiveSource, stationCode, context);
+    if (context.viewer.testMode) {
+      deleteTestStationRecord_(source, stationCode);
+    } else {
+      deleteStationOrgRows_(source.orgSheet, stationCode);
+      deleteStationManagerAssignmentRows_(source.assignmentSheet, stationCode);
+      invalidateDispatchSourceCache_();
+    }
     lock.releaseLock();
     hasLock = false;
 
@@ -1171,15 +1183,152 @@ function mergeStationsWithAssignmentGroups_(orgStations, assignments) {
   return Array.from(stationMap.values());
 }
 
+function applyTestStationOverrides_(source) {
+  if (!source || typeof source !== 'object') return source;
+
+  const hiddenStationCodes = getTestHiddenStationCodes_();
+  const createdStations = getTestCreatedStations_()
+    .filter((station) => station && station.code);
+  const stationByCode = new Map();
+  const assignments = (Array.isArray(source.assignments) ? source.assignments : [])
+    .filter((assignment) => !hiddenStationCodes.has(normalizeOrgCode_(assignment && assignment.orgCode)));
+
+  (Array.isArray(source.stations) ? source.stations : [])
+    .filter((station) => station && station.code && !hiddenStationCodes.has(station.code))
+    .forEach((station) => {
+      stationByCode.set(station.code, { ...station });
+    });
+
+  createdStations.forEach((station) => {
+    stationByCode.set(station.code, { ...station });
+    assignments.push(createTestStationManagerAssignment_(station));
+  });
+
+  return {
+    ...source,
+    assignments,
+    stations: Array.from(stationByCode.values())
+  };
+}
+
+function createTestStationManagerAssignment_(station) {
+  const managerEmail = normalizeEmail_(station && station.managerEmail);
+  const stationCode = normalizeOrgCode_(station && station.code);
+  const managerName = String(station && station.managerName || managerEmail).trim();
+  return {
+    rowIndex: 0,
+    assignmentKey: buildAssignmentKey_(managerEmail, stationCode),
+    email: managerEmail,
+    name: managerName,
+    orgCode: stationCode,
+    orgName: String(station && (station.alias || station.name) || stationCode).trim(),
+    title: APP_CONFIG.stationManagerTitle,
+    status: '在職',
+    isUnavailable: false,
+    managerEmail,
+    managerName,
+    temporaryDispatch: ''
+  };
+}
+
+function createTestStationRecord_(source, station) {
+  const normalized = normalizeTestStationRecord_(station);
+  if (!normalized) {
+    throw new Error('測試駐站資料格式錯誤。');
+  }
+
+  const stations = getTestCreatedStations_()
+    .filter((item) => item.code !== normalized.code);
+  stations.push(normalized);
+  saveTestCreatedStations_(stations);
+
+  const isOfficialStation = (Array.isArray(source && source.stations) ? source.stations : [])
+    .some((item) => item && item.code === normalized.code);
+  if (!isOfficialStation) {
+    const hiddenStationCodes = getTestHiddenStationCodes_();
+    hiddenStationCodes.delete(normalized.code);
+    saveTestHiddenStationCodes_(hiddenStationCodes);
+  }
+}
+
+function deleteTestStationRecord_(source, stationCode) {
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  if (!normalizedStationCode) {
+    throw new Error('請選擇要刪除的駐站。');
+  }
+
+  const stations = getTestCreatedStations_();
+  const nextStations = stations.filter((station) => station.code !== normalizedStationCode);
+  saveTestCreatedStations_(nextStations);
+
+  const isOfficialStation = (Array.isArray(source && source.stations) ? source.stations : [])
+    .some((station) => station && station.code === normalizedStationCode);
+  if (isOfficialStation) {
+    const hiddenStationCodes = getTestHiddenStationCodes_();
+    hiddenStationCodes.add(normalizedStationCode);
+    saveTestHiddenStationCodes_(hiddenStationCodes);
+  }
+}
+
+function getTestCreatedStations_() {
+  return getScriptJsonStore_(APP_CONFIG.testStationsStoreKey)
+    .map(normalizeTestStationRecord_)
+    .filter(Boolean);
+}
+
+function saveTestCreatedStations_(stations) {
+  const normalizedStations = (Array.isArray(stations) ? stations : [])
+    .map(normalizeTestStationRecord_)
+    .filter(Boolean)
+    .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code), 'zh-Hant'));
+  setScriptJsonStore_(APP_CONFIG.testStationsStoreKey, normalizedStations, APP_CONFIG.maxRecords);
+}
+
+function getTestHiddenStationCodes_() {
+  return new Set(getScriptJsonStore_(APP_CONFIG.testHiddenStationCodesStoreKey)
+    .map(normalizeOrgCode_)
+    .filter(Boolean));
+}
+
+function saveTestHiddenStationCodes_(stationCodes) {
+  const normalizedCodes = Array.from(stationCodes || [])
+    .map(normalizeOrgCode_)
+    .filter(Boolean)
+    .sort();
+  setScriptJsonStore_(APP_CONFIG.testHiddenStationCodesStoreKey, normalizedCodes, APP_CONFIG.maxRecords);
+}
+
+function normalizeTestStationRecord_(station) {
+  if (!station || typeof station !== 'object') return null;
+  const code = normalizeOrgCode_(station.code);
+  const managerEmail = normalizeEmail_(station.managerEmail);
+  if (!code || !managerEmail) return null;
+  const isExternal = Boolean(station.isExternal || isExternalStationCodeOrType_(code, station.type || station.typeLabel));
+  return {
+    rowIndex: 0,
+    type: String(station.type || station.typeLabel || (isExternal ? '委外駐站' : '一般駐站')).trim(),
+    level: Number(station.level || getEnvString_('DISPATCH_STATION_LEVEL', '3')),
+    code,
+    name: String(station.name || station.alias || code).trim(),
+    alias: String(station.alias || '').trim(),
+    parentCode: normalizeOrgCode_(station.parentCode || getEnvString_('DISPATCH_STATION_PARENT_CODE', '')),
+    managerEmail,
+    managerName: String(station.managerName || managerEmail).trim(),
+    isIsoCertified: Boolean(station.isIsoCertified),
+    isExternal
+  };
+}
+
 function buildDispatchContext_(source, viewerEmail, options) {
-  const stationByCode = new Map(source.stations.map((station) => [station.code, { ...station }]));
-  const stationAssignments = dedupeAssignments_(source.assignments)
-    .filter((assignment) => stationByCode.has(assignment.orgCode));
   const canUseTestMode = canUseTestMode_(viewerEmail, source.assignments);
   const testMode = Boolean(options && options.testMode && canUseTestMode);
   if (options && options.testMode && !canUseTestMode) {
     throw new Error('您沒有測試模式權限。');
   }
+  const effectiveSource = testMode ? applyTestStationOverrides_(source) : source;
+  const stationByCode = new Map(effectiveSource.stations.map((station) => [station.code, { ...station }]));
+  const stationAssignments = dedupeAssignments_(effectiveSource.assignments)
+    .filter((assignment) => stationByCode.has(assignment.orgCode));
 
   stationByCode.forEach((station) => {
     const nurseAssignments = stationAssignments
@@ -1241,8 +1390,8 @@ function buildDispatchContext_(source, viewerEmail, options) {
     })
     .sort(compareNurses_);
 
-  const viewerPerson = source.personnelByEmail.get(viewerEmail) || {};
-  const viewerAssignment = source.assignments.find((assignment) => assignment.email === viewerEmail) || {};
+  const viewerPerson = effectiveSource.personnelByEmail.get(viewerEmail) || {};
+  const viewerAssignment = effectiveSource.assignments.find((assignment) => assignment.email === viewerEmail) || {};
 
   return {
     viewer: {
@@ -1527,9 +1676,9 @@ function ensureStationManagerAssignment_(sheet, assignments, station) {
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
 }
 
-function assertCanDeleteStation_(source, stationCode) {
+function assertCanDeleteStation_(source, stationCode, options) {
   const normalizedStationCode = normalizeOrgCode_(stationCode);
-  const activeRecords = getStoredDispatchRecords_()
+  const activeRecords = getStoredDispatchRecords_(options)
     .filter((record) => (
       record.status === '有效'
       && (record.stationCode === normalizedStationCode || record.originalStationCode === normalizedStationCode)
