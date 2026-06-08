@@ -3830,7 +3830,7 @@
 
     function getHolidaySourceNotice() {
       const source = state.holidaySource || {};
-      if (source.fallback) return '假日資料暫用內建備援，官方來源恢復後會自動改用公告資料。';
+      if (source.message) return `官方假日資料：${source.message}`;
       if (source.available === false) return '假日資料暫時未載入，請稍後重新整理。';
       return '';
     }
