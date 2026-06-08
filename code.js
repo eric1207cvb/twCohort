@@ -774,6 +774,28 @@ function loadOfficialHolidayCalendarForRange_(dateFrom, dateTo) {
     };
   } catch (error) {
     console.error('讀取政府行政機關辦公日曆失敗:', error);
+    const fallbackEntries = years
+      .reduce((entries, year) => entries.concat(getOfficialHolidayFallbackEntriesForYear_(year)), [])
+      .filter((entry) => {
+        if (dateFrom && entry.date < dateFrom) return false;
+        if (dateTo && entry.date > dateTo) return false;
+        return true;
+      });
+    if (fallbackEntries.length) {
+      fallbackEntries.forEach((entry) => {
+        holidays[entry.date] = entry;
+      });
+      return {
+        holidays,
+        source: buildOfficialHolidaySourceInfo_({
+          available: true,
+          fallback: true,
+          years,
+          count: Object.keys(holidays).length,
+          message: error && error.message ? error.message : '政府行政機關辦公日曆暫時無法讀取，已使用內建備援資料。'
+        })
+      };
+    }
     return {
       holidays: {},
       source: buildOfficialHolidaySourceInfo_({
@@ -893,9 +915,60 @@ function buildOfficialHolidaySourceInfo_(options) {
     url: APP_CONFIG.holidayDatasetPageUrl,
     csvUrl: getEnvString_('DISPATCH_HOLIDAY_DATA_URL', APP_CONFIG.holidayDatasetCsvUrl),
     available: Boolean(settings.available),
+    fallback: Boolean(settings.fallback),
     years: Array.isArray(settings.years) ? settings.years : [],
     count: Number(settings.count || 0),
     message: String(settings.message || '').trim()
+  };
+}
+
+function getOfficialHolidayFallbackEntriesForYear_(year) {
+  const fallbackRowsByYear = {
+    2026: [
+      ['2026-01-01', '中華民國開國紀念日', '放假之紀念日及節日', '全國各機關學校放假一日。'],
+      ['2026-02-16', '除夕', '放假之紀念日及節日', ''],
+      ['2026-02-17', '春節', '放假之紀念日及節日', ''],
+      ['2026-02-18', '春節', '放假之紀念日及節日', ''],
+      ['2026-02-19', '春節', '放假之紀念日及節日', ''],
+      ['2026-02-20', '春節', '補假', '補假一日'],
+      ['2026-02-27', '', '補假', '和平紀念日逢例假日，於2/27（五）補假一日'],
+      ['2026-02-28', '和平紀念日', '放假之紀念日及節日', ''],
+      ['2026-04-03', '', '補假', '兒童節逢例假日，於4/3（五）補假一日。'],
+      ['2026-04-04', '兒童節', '放假之紀念日及節日', '全國各機關學校放假一日。'],
+      ['2026-04-05', '民族掃墓節', '放假之紀念日及節日', '4/5（日）清明節逢例假日，於4/6（一）補假一日'],
+      ['2026-04-06', '', '補假', '清明節補假一日'],
+      ['2026-05-01', '勞動節', '特定節日', '全國各機關學校及勞工放假一日。'],
+      ['2026-06-19', '端午節', '放假之紀念日及節日', '全國各機關學校放假一日。'],
+      ['2026-09-03', '軍人節', '特定節日', '軍人依國防部規定辦理。'],
+      ['2026-09-25', '中秋節', '放假之紀念日及節日', '全國各機關學校放假一日。'],
+      ['2026-09-28', '教師節', '放假之紀念日及節日', '全國各機關學校放假一日。'],
+      ['2026-10-09', '', '補假', '國慶日逢例假日，於10/9（五）補假一日'],
+      ['2026-10-10', '國慶日', '放假之紀念日及節日', '10/10（六）國慶日逢例假日，於10/9（五）補假一日'],
+      ['2026-10-25', '光復節', '放假之紀念日及節日', '10/25（日）台灣光復節逢例假日，於10/26（一）補假一日'],
+      ['2026-10-26', '', '補假', '台灣光復節補假一日'],
+      ['2026-12-25', '行憲紀念日', '放假之紀念日及節日', '']
+    ]
+  };
+  return (fallbackRowsByYear[Number(year)] || []).map((row) => buildOfficialHolidayFallbackEntry_(row, year));
+}
+
+function buildOfficialHolidayFallbackEntry_(row, year) {
+  const date = row[0];
+  const name = row[1];
+  const category = row[2];
+  const description = row[3];
+  const kind = getOfficialHolidayKind_(false, category);
+  return {
+    date,
+    year: Number(year),
+    name,
+    category,
+    description,
+    label: getOfficialHolidayLabel_(name, category, description, kind),
+    isHoliday: true,
+    isMakeupWorkday: false,
+    kind,
+    fallback: true
   };
 }
 

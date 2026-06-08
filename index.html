@@ -3724,7 +3724,7 @@
       const months = buildYearMonths(year);
       el.scheduleTable.style.minWidth = '';
       el.scheduleTitle.textContent = '月';
-      el.scheduleDescription.textContent = '依駐站與月份標示調入、調出與人數變化。';
+      setScheduleDescription('依駐站與月份標示調入、調出與人數變化。');
       el.scheduleHead.innerHTML = `
         <tr>
           <th>駐站</th>
@@ -3750,9 +3750,9 @@
       const weeks = buildVisibleYearWeeks(year);
       el.scheduleTable.style.minWidth = '';
       el.scheduleTitle.textContent = '週';
-      el.scheduleDescription.textContent = year === new Date().getFullYear()
+      setScheduleDescription(year === new Date().getFullYear()
         ? '從本週開始，依駐站與週次標示調入、調出與人數變化。'
-        : '依駐站與週次標示調入、調出與人數變化。';
+        : '依駐站與週次標示調入、調出與人數變化。');
       el.scheduleHead.innerHTML = `
         <tr>
           <th>駐站</th>
@@ -3781,9 +3781,9 @@
       const endDate = dates[dates.length - 1] || startDate;
       el.scheduleTable.style.minWidth = `${190 + dates.length * RESPONSIVE_DAY_MIN_WIDTH}px`;
       el.scheduleTitle.textContent = isMobileCaseMode() ? '行動收案' : '日';
-      el.scheduleDescription.textContent = isMobileCaseMode()
+      setScheduleDescription(isMobileCaseMode()
         ? `${formatFullDate(dates[0] || startDate)} 至 ${formatFullDate(endDate)}，固定顯示週日到週四。`
-        : `${formatFullDate(startDate)} 至 ${formatFullDate(endDate)}，依目前寬度顯示 ${formatNumber(dates.length)} 天。`;
+        : `${formatFullDate(startDate)} 至 ${formatFullDate(endDate)}，依目前寬度顯示 ${formatNumber(dates.length)} 天。`);
       el.scheduleHead.innerHTML = `
         <tr>
           <th>駐站</th>
@@ -3821,6 +3821,18 @@
           ${cells}
         </tr>
       `;
+    }
+
+    function setScheduleDescription(description) {
+      const notice = getHolidaySourceNotice();
+      el.scheduleDescription.textContent = [description, notice].filter(Boolean).join(' ');
+    }
+
+    function getHolidaySourceNotice() {
+      const source = state.holidaySource || {};
+      if (source.fallback) return '假日資料暫用內建備援，官方來源恢復後會自動改用公告資料。';
+      if (source.available === false) return '假日資料暫時未載入，請稍後重新整理。';
+      return '';
     }
 
     function buildDailyScheduleCellData(station, dateString) {
