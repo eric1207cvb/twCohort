@@ -8,6 +8,8 @@ const APP_CONFIG = {
   stationManagerTitle: '駐站管理員',
   storeKey: 'stationNurseWorkHours:v1',
   testStoreKey: 'stationNurseWorkHours:test:v1',
+  auditLogStoreKey: 'stationNurseWorkHours:audit:v1',
+  testAuditLogStoreKey: 'stationNurseWorkHours:audit:test:v1',
   testStationsStoreKey: 'stationNurseStations:test:v1',
   testHiddenStationCodesStoreKey: 'stationNurseStations:hidden:test:v1',
   sourceCacheKey: 'stationNurseDispatchSource:v1',
@@ -27,6 +29,7 @@ const APP_CONFIG = {
   writeLockWaitMs: 30000,
   chunkSize: 8000,
   maxRecords: 3000,
+  maxAuditLogs: 1000,
   defaultRangeDays: 31,
   temporaryDispatchCooldownDays: 30,
   maxHoursPerRecord: 24,
@@ -318,7 +321,8 @@ function getDispatchFairnessStats(payload) {
       cooldownDays: APP_CONFIG.temporaryDispatchCooldownDays,
       stationStats: buildFairnessStationStats_(records, context.stations),
       nurseStats: buildFairnessNurseStats_(records),
-      records
+      records,
+      auditLogs: getDispatchAuditLogs_(allowedStationCodes, filters, context)
     };
   } catch (error) {
     console.error('讀取年度臨時徵調統計失敗:', error);
@@ -362,12 +366,16 @@ function saveWorkHourDispatch(payload) {
     assertTemporaryDispatchCooldown_(normalized, records);
     const previousAssignmentKey = existingIndex >= 0 ? records[existingIndex].assignmentKey : '';
     const now = formatTimestamp_(new Date());
+    let savedRecord = null;
+    let auditAction = 'create';
+    let previousRecord = null;
 
     if (existingIndex >= 0) {
       const existing = records[existingIndex];
       assertCanManageStation_(context, existing.stationCode);
       assertDispatchRecordVersion_(existing, payload, '儲存', source);
-      records.splice(existingIndex, 1, {
+      previousRecord = existing;
+      savedRecord = {
         ...existing,
         ...normalized,
         id: existing.id,
@@ -377,9 +385,11 @@ function saveWorkHourDispatch(payload) {
         updatedAt: now,
         updatedBy: viewerEmail,
         status: '有效'
-      });
+      };
+      auditAction = 'update';
+      records.splice(existingIndex, 1, savedRecord);
     } else {
-      records.unshift({
+      savedRecord = {
         ...normalized,
         id: Utilities.getUuid(),
         version: createDispatchRecordVersion_(),
@@ -388,10 +398,20 @@ function saveWorkHourDispatch(payload) {
         updatedAt: now,
         updatedBy: viewerEmail,
         status: '有效'
-      });
+      };
+      records.unshift(savedRecord);
     }
 
     saveStoredDispatchRecords_(records, context);
+    appendDispatchAuditLogs_([
+      buildDispatchAuditLog_(auditAction, savedRecord, {
+        context,
+        source,
+        viewerEmail,
+        occurredAt: now,
+        previousRecord
+      })
+    ], context);
     syncTemporaryDispatchColumn_(source, records, [
       normalized.assignmentKey,
       previousAssignmentKey
@@ -462,6 +482,12 @@ function saveWorkHourDispatchBatch(payload) {
 
     records.unshift(...pendingRecords);
     saveStoredDispatchRecords_(records, context);
+    appendDispatchAuditLogs_(pendingRecords.map((record) => buildDispatchAuditLog_('create', record, {
+      context,
+      source,
+      viewerEmail,
+      occurredAt: now
+    })), context);
     syncTemporaryDispatchColumn_(source, records, normalizedRecords.map((record) => record.assignmentKey), context);
     lock.releaseLock();
     hasLock = false;
@@ -506,7 +532,7 @@ function savePendingWorkHourDispatch(payload) {
     assertNoDuplicatePendingDispatchDemand_(normalized, records);
     const now = formatTimestamp_(new Date());
 
-    records.unshift({
+    const pendingRecord = {
       ...normalized,
       id: Utilities.getUuid(),
       version: createDispatchRecordVersion_(),
@@ -515,9 +541,18 @@ function savePendingWorkHourDispatch(payload) {
       updatedAt: now,
       updatedBy: viewerEmail,
       status: '有效'
-    });
+    };
+    records.unshift(pendingRecord);
 
     saveStoredDispatchRecords_(records, context);
+    appendDispatchAuditLogs_([
+      buildDispatchAuditLog_('create-pending', pendingRecord, {
+        context,
+        source,
+        viewerEmail,
+        occurredAt: now
+      })
+    ], context);
     lock.releaseLock();
     hasLock = false;
 
@@ -578,7 +613,8 @@ function assignPendingWorkHourDispatch(payload) {
     assertNoOverlappingNurseDispatch_(normalized, records);
     assertTemporaryDispatchCooldown_(normalized, records);
 
-    records[targetIndex] = {
+    const now = formatTimestamp_(new Date());
+    const assignedRecord = {
       ...pendingRecord,
       ...normalized,
       id: pendingRecord.id,
@@ -587,12 +623,22 @@ function assignPendingWorkHourDispatch(payload) {
       assignmentStatus: '',
       demandCount: 1,
       version: createDispatchRecordVersion_(),
-      updatedAt: formatTimestamp_(new Date()),
+      updatedAt: now,
       updatedBy: viewerEmail,
       status: '有效'
     };
+    records[targetIndex] = assignedRecord;
 
     saveStoredDispatchRecords_(records, context);
+    appendDispatchAuditLogs_([
+      buildDispatchAuditLog_('assign-pending', assignedRecord, {
+        context,
+        source,
+        viewerEmail,
+        occurredAt: now,
+        previousRecord: pendingRecord
+      })
+    ], context);
     syncTemporaryDispatchColumn_(source, records, [normalized.assignmentKey], context);
     lock.releaseLock();
     hasLock = false;
@@ -644,9 +690,18 @@ function deleteWorkHourDispatch(payload) {
     const deletedRecord = records[targetIndex];
     assertCanManageStation_(context, deletedRecord.stationCode);
     assertDispatchRecordVersion_(deletedRecord, payload, '刪除', source);
+    const now = formatTimestamp_(new Date());
     records.splice(targetIndex, 1);
 
     saveStoredDispatchRecords_(records, context);
+    appendDispatchAuditLogs_([
+      buildDispatchAuditLog_('delete', deletedRecord, {
+        context,
+        source,
+        viewerEmail,
+        occurredAt: now
+      })
+    ], context);
     syncTemporaryDispatchColumn_(source, records, [deletedRecord.assignmentKey], context);
     lock.releaseLock();
     hasLock = false;
@@ -2669,11 +2724,60 @@ function saveStoredDispatchRecords_(records, options) {
   putCachedJson_(store.recordsCacheKey, normalized, APP_CONFIG.recordsCacheSeconds);
 }
 
+function appendDispatchAuditLogs_(logs, options) {
+  try {
+    const normalizedLogs = (Array.isArray(logs) ? logs : [logs])
+      .map(normalizeDispatchAuditLog_)
+      .filter(Boolean);
+    if (!normalizedLogs.length) return;
+
+    const store = getDispatchRecordStoreKeys_(options);
+    const existingLogs = getScriptJsonStore_(store.auditLogStoreKey)
+      .map(normalizeDispatchAuditLog_)
+      .filter(Boolean);
+    const mergedLogs = normalizedLogs
+      .concat(existingLogs)
+      .sort(compareDispatchAuditLogs_)
+      .slice(0, APP_CONFIG.maxAuditLogs);
+    setScriptJsonStore_(store.auditLogStoreKey, mergedLogs, APP_CONFIG.maxAuditLogs);
+  } catch (error) {
+    console.error('寫入調派操作紀錄失敗:', error);
+  }
+}
+
+function getDispatchAuditLogs_(allowedStationCodes, filters, options) {
+  const store = getDispatchRecordStoreKeys_(options);
+  const normalizedFilters = filters || {};
+  return getScriptJsonStore_(store.auditLogStoreKey)
+    .map(normalizeDispatchAuditLog_)
+    .filter(Boolean)
+    .filter((log) => {
+      if (allowedStationCodes) {
+        const allowedTarget = allowedStationCodes.has(log.stationCode);
+        const allowedOriginal = allowedStationCodes.has(log.originalStationCode);
+        if (!allowedTarget && !allowedOriginal) return false;
+      }
+      if (normalizedFilters.stationCode && log.stationCode !== normalizedFilters.stationCode && log.originalStationCode !== normalizedFilters.stationCode) return false;
+      if (normalizedFilters.nurseEmail && normalizeEmail_(log.nurseEmail) !== normalizedFilters.nurseEmail) return false;
+      const startDate = log.startDate || log.actionDate || '';
+      const endDate = log.endDate || startDate;
+      const actionDate = log.actionDate || '';
+      const inDispatchRange = startDate && endDate && dateRangesOverlap_(startDate, endDate, normalizedFilters.dateFrom, normalizedFilters.dateTo);
+      const inActionRange = actionDate
+        && (!normalizedFilters.dateFrom || actionDate >= normalizedFilters.dateFrom)
+        && (!normalizedFilters.dateTo || actionDate <= normalizedFilters.dateTo);
+      if ((normalizedFilters.dateFrom || normalizedFilters.dateTo) && !inDispatchRange && !inActionRange) return false;
+      return true;
+    })
+    .sort(compareDispatchAuditLogs_);
+}
+
 function getDispatchRecordStoreKeys_(options) {
   const testMode = isTestDispatchRecordStore_(options);
   return {
     storeKey: testMode ? APP_CONFIG.testStoreKey : APP_CONFIG.storeKey,
-    recordsCacheKey: testMode ? APP_CONFIG.testRecordsCacheKey : APP_CONFIG.recordsCacheKey
+    recordsCacheKey: testMode ? APP_CONFIG.testRecordsCacheKey : APP_CONFIG.recordsCacheKey,
+    auditLogStoreKey: testMode ? APP_CONFIG.testAuditLogStoreKey : APP_CONFIG.auditLogStoreKey
   };
 }
 
@@ -2681,6 +2785,126 @@ function isTestDispatchRecordStore_(options) {
   if (!options) return false;
   if (options.viewer && options.viewer.testMode) return true;
   return Boolean(options.testMode);
+}
+
+function buildDispatchAuditLog_(action, record, options) {
+  const settings = options || {};
+  const viewerEmail = normalizeEmail_(settings.viewerEmail);
+  const source = settings.source || {};
+  const operatorPerson = source.personnelByEmail && viewerEmail
+    ? source.personnelByEmail.get(viewerEmail)
+    : null;
+  const previousRecord = settings.previousRecord || null;
+  const occurredAt = String(settings.occurredAt || formatTimestamp_(new Date())).trim();
+  const actionDate = occurredAt.slice(0, 10);
+
+  return {
+    id: Utilities.getUuid(),
+    action: normalizeAuditAction_(action),
+    actionLabel: getDispatchAuditActionLabel_(action),
+    occurredAt,
+    actionDate,
+    operatorEmail: viewerEmail,
+    operatorName: String(operatorPerson && operatorPerson.name || '').trim(),
+    testMode: Boolean(settings.context && settings.context.viewer && settings.context.viewer.testMode),
+    recordId: String(record && record.id || '').trim(),
+    recordVersion: String(record && record.version || '').trim(),
+    stationCode: normalizeOrgCode_(record && record.stationCode),
+    stationName: String(record && (record.stationName || record.stationCode) || '').trim(),
+    originalStationCode: normalizeOrgCode_(record && record.originalStationCode),
+    originalStationName: String(record && (record.originalStationName || record.originalStationCode) || '').trim(),
+    assignmentKey: String(record && record.assignmentKey || '').trim(),
+    nurseEmail: normalizeEmail_(record && record.nurseEmail),
+    nurseName: String(record && (record.nurseName || record.nurseEmail) || '').trim(),
+    startDate: String(record && (record.startDate || record.workDate) || '').trim(),
+    endDate: String(record && (record.endDate || record.workDate || record.startDate) || '').trim(),
+    shiftName: normalizeDispatchMode_(record && record.shiftName || APP_CONFIG.shiftOptions[0]),
+    dispatchDays: Number(record && record.dispatchDays || countDateRangeDays_(record && record.startDate, record && record.endDate)),
+    assignmentStatus: normalizeAssignmentStatus_(record && record.assignmentStatus),
+    demandCount: Math.max(1, Number(record && record.demandCount || 1)),
+    note: String(record && record.note || '').trim(),
+    previousSummary: previousRecord ? buildDispatchAuditRecordSummary_(previousRecord) : ''
+  };
+}
+
+function buildDispatchAuditRecordSummary_(record) {
+  return [
+    formatDispatchDateRange_(record && record.startDate, record && record.endDate),
+    record && (record.originalStationName || record.originalStationCode) ? `原：${record.originalStationName || record.originalStationCode}` : '',
+    record && (record.stationName || record.stationCode) ? `至：${record.stationName || record.stationCode}` : '',
+    record && (record.nurseName || record.nurseEmail) ? `人員：${record.nurseName || record.nurseEmail}` : '',
+    record && record.assignmentStatus ? `狀態：${record.assignmentStatus}` : ''
+  ].filter(Boolean).join('｜');
+}
+
+function normalizeAuditAction_(action) {
+  const normalized = String(action || '').trim();
+  return [
+    'create',
+    'update',
+    'delete',
+    'create-pending',
+    'assign-pending'
+  ].includes(normalized) ? normalized : 'update';
+}
+
+function getDispatchAuditActionLabel_(action) {
+  const normalized = normalizeAuditAction_(action);
+  const labels = {
+    create: '建立調派',
+    update: '修改調派',
+    delete: '刪除調派',
+    'create-pending': '建立待指派需求',
+    'assign-pending': '確認待指派人選'
+  };
+  return labels[normalized] || '調派異動';
+}
+
+function normalizeDispatchAuditLog_(log) {
+  if (!log || typeof log !== 'object') return null;
+  const occurredAt = String(log.occurredAt || '').trim();
+  const stationCode = normalizeOrgCode_(log.stationCode);
+  const originalStationCode = normalizeOrgCode_(log.originalStationCode);
+  const recordId = String(log.recordId || '').trim();
+  if (!occurredAt || !recordId || (!stationCode && !originalStationCode)) return null;
+  const action = normalizeAuditAction_(log.action);
+  const startDate = String(log.startDate || '').trim();
+  const endDate = String(log.endDate || startDate).trim();
+  const dispatchDays = Number(log.dispatchDays || countDateRangeDays_(startDate, endDate));
+
+  return {
+    id: String(log.id || buildLegacyDispatchRecordVersion_(log) || Utilities.getUuid()).trim(),
+    action,
+    actionLabel: String(log.actionLabel || getDispatchAuditActionLabel_(action)).trim(),
+    occurredAt,
+    actionDate: String(log.actionDate || occurredAt.slice(0, 10)).trim(),
+    operatorEmail: normalizeEmail_(log.operatorEmail),
+    operatorName: String(log.operatorName || '').trim(),
+    testMode: Boolean(log.testMode),
+    recordId,
+    recordVersion: String(log.recordVersion || '').trim(),
+    stationCode,
+    stationName: String(log.stationName || stationCode).trim(),
+    originalStationCode,
+    originalStationName: String(log.originalStationName || originalStationCode).trim(),
+    assignmentKey: String(log.assignmentKey || '').trim(),
+    nurseEmail: normalizeEmail_(log.nurseEmail),
+    nurseName: String(log.nurseName || log.nurseEmail || '').trim(),
+    startDate,
+    endDate,
+    shiftName: normalizeDispatchMode_(log.shiftName || APP_CONFIG.shiftOptions[0]),
+    dispatchDays: Number.isFinite(dispatchDays) && dispatchDays > 0 ? dispatchDays : 0,
+    assignmentStatus: normalizeAssignmentStatus_(log.assignmentStatus),
+    demandCount: Math.max(1, Number(log.demandCount || 1)),
+    note: String(log.note || '').trim(),
+    previousSummary: String(log.previousSummary || '').trim()
+  };
+}
+
+function compareDispatchAuditLogs_(a, b) {
+  const timeCompare = String(b && b.occurredAt || '').localeCompare(String(a && a.occurredAt || ''));
+  if (timeCompare !== 0) return timeCompare;
+  return String(b && b.id || '').localeCompare(String(a && a.id || ''));
 }
 
 function normalizeStoredDispatchRecord_(record) {

@@ -2073,6 +2073,7 @@
         stationStats: [],
         nurseStats: [],
         records: [],
+        auditLogs: [],
         cooldownDays: 30,
         ready: false,
         isLoading: false,
@@ -3740,6 +3741,7 @@
           stationStats: Array.isArray(response.stationStats) ? response.stationStats : [],
           nurseStats: Array.isArray(response.nurseStats) ? response.nurseStats : [],
           records: Array.isArray(response.records) ? response.records : [],
+          auditLogs: Array.isArray(response.auditLogs) ? response.auditLogs : [],
           ready: true,
           isLoading: false,
           testMode: state.testMode
@@ -3747,7 +3749,7 @@
         renderFairnessFilterOptions();
         renderFairnessStats();
         if (!settings.silent) {
-          setRecordsStatus(`年度臨時徵調統計已更新：目前 ${formatNumber(state.fairness.records.length)} 筆｜${formatSyncClock(new Date())}`, 'success');
+          setRecordsStatus(`年度臨時徵調統計已更新：目前 ${formatNumber(state.fairness.records.length)} 筆，操作紀錄 ${formatNumber(state.fairness.auditLogs.length)} 筆｜${formatSyncClock(new Date())}`, 'success');
         }
         return true;
       } catch (error) {
@@ -4931,7 +4933,8 @@
       const records = getDisplayedRecords();
       const stationStats = Array.isArray(state.fairness.stationStats) ? state.fairness.stationStats : [];
       const nurseStats = Array.isArray(state.fairness.nurseStats) ? state.fairness.nurseStats : [];
-      if (!records.length && !stationStats.length && !nurseStats.length) {
+      const auditLogs = Array.isArray(state.fairness.auditLogs) ? state.fairness.auditLogs : [];
+      if (!records.length && !stationStats.length && !nurseStats.length && !auditLogs.length) {
         setRecordsStatus('目前沒有可輸出的年度臨時徵調統計。', 'error');
         return;
       }
@@ -4952,6 +4955,7 @@
         ['臨時徵調紀錄', formatNumber(records.length)],
         ['涉及護理師', formatNumber(nurseStats.length)],
         ['累計人天', formatNumber(records.reduce((sum, record) => sum + getDispatchDays(record), 0))],
+        ['操作紀錄', formatNumber(auditLogs.length)],
         [],
         ['各駐站臨時徵調人天'],
         ['駐站', '調入人天', '調出人天', '合計人天', '涉及人員', '調入筆數', '調出筆數', '合計筆數']
@@ -4988,6 +4992,30 @@
         ]);
       });
 
+      rows.push(
+        [],
+        ['調派操作紀錄'],
+        ['操作時間', '操作者', '操作者信箱', '動作', '期間', '來源駐站', '調派駐站', '護理師', '護理師信箱', '班別', '天數', '狀態', '備註', '修改前摘要']
+      );
+      auditLogs.forEach((log) => {
+        rows.push([
+          log.occurredAt || '',
+          log.operatorName || '',
+          log.operatorEmail || '',
+          log.actionLabel || log.action || '',
+          formatAuditDateRange(log),
+          log.originalStationName || log.originalStationCode || '',
+          log.stationName || log.stationCode || '',
+          log.nurseName || '',
+          log.nurseEmail || '',
+          normalizeDispatchMode(log.shiftName || ''),
+          formatNumber(log.dispatchDays || 0),
+          log.assignmentStatus || (log.testMode ? '測試模式' : '正式'),
+          log.note || '',
+          log.previousSummary || ''
+        ]);
+      });
+
       const blob = buildXlsxWorkbookBlob(rows, '年度徵調統計');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -4997,7 +5025,14 @@
       link.click();
       document.body.removeChild(link);
       window.setTimeout(() => URL.revokeObjectURL(url), 500);
-      setRecordsStatus(`已輸出年度臨時徵調統計：${formatNumber(stationStats.length)} 站、${formatNumber(nurseStats.length)} 人。`, 'success');
+      setRecordsStatus(`已輸出年度臨時徵調統計：${formatNumber(stationStats.length)} 站、${formatNumber(nurseStats.length)} 人、${formatNumber(auditLogs.length)} 筆操作紀錄。`, 'success');
+    }
+
+    function formatAuditDateRange(log) {
+      const start = normalizeDateInput(log && log.startDate);
+      const end = normalizeDateInput(log && log.endDate) || start;
+      if (!start) return '';
+      return end && end !== start ? `${start} 至 ${end}` : start;
     }
 
     function buildXlsxWorkbookBlob(rows, sheetName) {
@@ -5640,6 +5675,7 @@
       state.fairness.stationStats = [];
       state.fairness.nurseStats = [];
       state.fairness.records = [];
+      state.fairness.auditLogs = [];
       renderFairnessStats();
       setRecordsStatus('年度統計條件已變更，請按「查詢統計」更新結果。');
     }
