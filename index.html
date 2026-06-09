@@ -4034,8 +4034,11 @@
 
     function getHolidaySourceNotice() {
       const source = state.holidaySource || {};
-      if (source.message) return `官方假日資料：${source.message}`;
-      if (source.available === false) return '假日資料暫時未載入，請稍後重新整理。';
+      const refreshText = source.refreshSchedule
+        ? `更新機制：${source.refreshSchedule}${source.refreshedAt ? `，上次檢查 ${source.refreshedAt}` : ''}。`
+        : '';
+      if (source.message) return `官方假日資料：${source.message} ${refreshText}`.trim();
+      if (source.available === false) return `假日資料暫時未載入，請稍後重新整理。${refreshText ? ` ${refreshText}` : ''}`.trim();
       return '';
     }
 

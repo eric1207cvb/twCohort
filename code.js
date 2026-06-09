@@ -14,12 +14,16 @@ const APP_CONFIG = {
   recordsCacheKey: 'stationNurseWorkHours:records:v1',
   testRecordsCacheKey: 'stationNurseWorkHours:records:test:v1',
   holidayCacheKey: 'stationNurseOfficialHolidays:v1',
+  holidayRefreshStoreKey: 'stationNurseOfficialHolidays:refresh:v1',
+  holidayRefreshTriggerFunction: 'refreshOfficialHolidayCalendarCache',
   holidayDatasetCsvUrl: 'https://data.ntpc.gov.tw/api/datasets/308dcd75-6434-45bc-a95f-584da4fed251/csv/file',
   holidayDatasetPageUrl: 'https://data.gov.tw/dataset/123662',
   cacheMaxChars: 90000,
   sourceCacheSeconds: 120,
   recordsCacheSeconds: 45,
   holidayCacheSeconds: 43200,
+  holidayRefreshHour: 5,
+  holidayRefreshLookAheadYears: 2,
   writeLockWaitMs: 30000,
   chunkSize: 8000,
   maxRecords: 3000,
@@ -69,15 +73,125 @@ function getCurrentUserEmail() {
 }
 
 function authorizeOfficialHolidayCalendar() {
-  const rows = getOfficialHolidayDatasetRows_();
   const currentYear = Number(getTodayDateString_().slice(0, 4));
-  const currentYearEntries = parseOfficialHolidayEntriesForYear_(rows, currentYear);
+  const refreshResult = refreshOfficialHolidayCalendarCache({ years: [currentYear] });
+  if (!refreshResult || refreshResult.success === false) {
+    throw new Error(refreshResult && refreshResult.message ? refreshResult.message : '官方假日資料授權失敗。');
+  }
   const source = buildOfficialHolidaySourceInfo_({
     available: true,
     years: [currentYear],
-    count: currentYearEntries.length
+    count: refreshResult.yearResults && refreshResult.yearResults[0]
+      ? refreshResult.yearResults[0].count
+      : 0
   });
-  return `官方假日資料授權成功：${source.provider}「${source.name}」已可讀取，${currentYear} 年目前 ${currentYearEntries.length} 筆提示日期。`;
+  return `官方假日資料授權成功：${source.provider}「${source.name}」已可讀取，${currentYear} 年目前 ${source.count} 筆提示日期。`;
+}
+
+function installOfficialHolidayRefreshTrigger() {
+  const functionName = APP_CONFIG.holidayRefreshTriggerFunction;
+  ScriptApp.getProjectTriggers()
+    .filter((trigger) => trigger.getHandlerFunction() === functionName)
+    .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
+
+  ScriptApp.newTrigger(functionName)
+    .timeBased()
+    .everyDays(1)
+    .atHour(APP_CONFIG.holidayRefreshHour)
+    .create();
+
+  const refreshResult = refreshOfficialHolidayCalendarCache();
+  const message = refreshResult && refreshResult.message
+    ? refreshResult.message
+    : '官方假日資料已刷新。';
+  return `官方假日資料每日更新已建立：每天 ${APP_CONFIG.holidayRefreshHour}:00 左右檢查官方 CSV。${message}`;
+}
+
+function ensureOfficialHolidayRefreshTrigger_() {
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const today = getTodayDateString_();
+    const checkKey = `${APP_CONFIG.holidayRefreshStoreKey}:triggerCheckDate`;
+    if (properties.getProperty(checkKey) === today) return;
+
+    const functionName = APP_CONFIG.holidayRefreshTriggerFunction;
+    const hasTrigger = ScriptApp.getProjectTriggers()
+      .some((trigger) => trigger.getHandlerFunction() === functionName);
+    if (!hasTrigger) {
+      ScriptApp.newTrigger(functionName)
+        .timeBased()
+        .everyDays(1)
+        .atHour(APP_CONFIG.holidayRefreshHour)
+        .create();
+      properties.setProperty(`${APP_CONFIG.holidayRefreshStoreKey}:triggerInstalledAt`, formatTimestamp_(new Date()));
+    }
+    properties.setProperty(checkKey, today);
+  } catch (error) {
+    console.error('確認官方假日每日更新 trigger 失敗:', error);
+  }
+}
+
+function removeOfficialHolidayRefreshTrigger() {
+  const functionName = APP_CONFIG.holidayRefreshTriggerFunction;
+  let removedCount = 0;
+  ScriptApp.getProjectTriggers()
+    .filter((trigger) => trigger.getHandlerFunction() === functionName)
+    .forEach((trigger) => {
+      ScriptApp.deleteTrigger(trigger);
+      removedCount += 1;
+    });
+  return `官方假日資料每日更新已移除 ${removedCount} 個 trigger。`;
+}
+
+function refreshOfficialHolidayCalendarCache(payload) {
+  const refreshedAt = formatTimestamp_(new Date());
+  const years = getOfficialHolidayRefreshYears_(payload);
+
+  try {
+    clearOfficialHolidayCache_(years);
+    const rows = getOfficialHolidayDatasetRows_({ forceFresh: true });
+    const yearResults = years.map((year) => {
+      const entries = parseOfficialHolidayEntriesForYear_(rows, year);
+      putCachedJson_(`${APP_CONFIG.holidayCacheKey}:${year}`, entries, APP_CONFIG.holidayCacheSeconds);
+      return {
+        year,
+        count: entries.length,
+        available: entries.length > 0
+      };
+    });
+    const metadata = {
+      refreshedAt,
+      years,
+      yearResults,
+      missingYears: yearResults.filter((item) => !item.available).map((item) => item.year),
+      csvUrl: getEnvString_('DISPATCH_HOLIDAY_DATA_URL', APP_CONFIG.holidayDatasetCsvUrl),
+      schedule: `每日 ${APP_CONFIG.holidayRefreshHour}:00 左右自動檢查官方 CSV`
+    };
+    setOfficialHolidayRefreshMetadata_(metadata);
+
+    return {
+      success: true,
+      ...metadata,
+      message: buildOfficialHolidayRefreshMessage_(metadata)
+    };
+  } catch (error) {
+    const metadata = {
+      refreshedAt,
+      years,
+      yearResults: [],
+      missingYears: years,
+      csvUrl: getEnvString_('DISPATCH_HOLIDAY_DATA_URL', APP_CONFIG.holidayDatasetCsvUrl),
+      schedule: `每日 ${APP_CONFIG.holidayRefreshHour}:00 左右自動檢查官方 CSV`,
+      error: error && error.message ? error.message : '官方假日資料刷新失敗。'
+    };
+    setOfficialHolidayRefreshMetadata_(metadata);
+    console.error('刷新官方假日資料失敗:', error);
+    return {
+      success: false,
+      ...metadata,
+      message: metadata.error
+    };
+  }
 }
 
 function getDispatchAppData(payload) {
@@ -87,6 +201,7 @@ function getDispatchAppData(payload) {
     if (!viewerEmail) {
       throw new Error('無法辨識目前登入帳號。');
     }
+    ensureOfficialHolidayRefreshTrigger_();
 
     const filters = normalizeDispatchFilters_(payload);
     const source = loadDispatchSource_();
@@ -759,7 +874,8 @@ function putCachedJson_(key, value, ttlSeconds) {
 
   const raw = JSON.stringify(value);
   if (raw.length > APP_CONFIG.cacheMaxChars) return;
-  cache.put(key, raw, ttlSeconds);
+  const ttl = Math.max(1, Math.min(Number(ttlSeconds || 0), 21600));
+  cache.put(key, raw, ttl);
 }
 
 function removeCachedValue_(key) {
@@ -801,7 +917,7 @@ function loadOfficialHolidayCalendarForRange_(dateFrom, dateTo) {
         missingYears,
         count: Object.keys(holidays).length,
         message: missingYears.length
-          ? `政府資料集中尚未取得 ${missingYears.join('、')} 年行政機關辦公日曆。`
+          ? buildMissingOfficialHolidayMessage_(missingYears)
           : ''
       })
     };
@@ -832,8 +948,9 @@ function loadOfficialHolidayCalendarForYear_(year) {
   return entries;
 }
 
-function getOfficialHolidayDatasetRows_() {
-  if (Array.isArray(officialHolidayDatasetRowsCache_)) return officialHolidayDatasetRowsCache_;
+function getOfficialHolidayDatasetRows_(options) {
+  const forceFresh = Boolean(options && options.forceFresh);
+  if (!forceFresh && Array.isArray(officialHolidayDatasetRowsCache_)) return officialHolidayDatasetRowsCache_;
 
   const url = getEnvString_('DISPATCH_HOLIDAY_DATA_URL', APP_CONFIG.holidayDatasetCsvUrl);
   const response = UrlFetchApp.fetch(url, {
@@ -918,8 +1035,79 @@ function getOfficialHolidayYearsForRange_(dateFrom, dateTo) {
   return years.length ? years : [todayYear];
 }
 
+function getOfficialHolidayRefreshYears_(payload) {
+  const explicitYears = Array.isArray(payload && payload.years)
+    ? payload.years
+      .map((year) => Number(year || 0))
+      .filter((year) => Number.isInteger(year) && year >= 1900 && year <= 2200)
+    : [];
+  if (explicitYears.length) {
+    return Array.from(new Set(explicitYears)).sort((a, b) => a - b);
+  }
+
+  const currentYear = Number(getTodayDateString_().slice(0, 4));
+  const lookAheadYears = Math.max(0, Number(APP_CONFIG.holidayRefreshLookAheadYears || 0));
+  const years = [];
+  for (let year = currentYear; year <= currentYear + lookAheadYears; year += 1) {
+    years.push(year);
+  }
+  return years;
+}
+
+function clearOfficialHolidayCache_(years) {
+  (Array.isArray(years) ? years : []).forEach((year) => {
+    removeCachedValue_(`${APP_CONFIG.holidayCacheKey}:${year}`);
+  });
+}
+
+function buildMissingOfficialHolidayMessage_(missingYears) {
+  const years = (Array.isArray(missingYears) ? missingYears : [])
+    .map((year) => Number(year || 0))
+    .filter((year) => Number.isInteger(year))
+    .sort((a, b) => a - b);
+  const yearText = years.length ? `${years.join('、')} 年` : '該年度';
+  return `官方開放資料尚未提供 ${yearText}行政機關辦公日曆；系統會每日自動檢查官方 CSV，資料發布後會自動套用。`;
+}
+
+function buildOfficialHolidayRefreshMessage_(metadata) {
+  const yearResults = Array.isArray(metadata && metadata.yearResults) ? metadata.yearResults : [];
+  const available = yearResults.filter((item) => item.available);
+  const missingYears = Array.isArray(metadata && metadata.missingYears) ? metadata.missingYears : [];
+  const availableText = available.length
+    ? `已取得 ${available.map((item) => `${item.year} 年 ${item.count} 筆`).join('、')}。`
+    : '';
+  const missingText = missingYears.length
+    ? buildMissingOfficialHolidayMessage_(missingYears)
+    : '';
+  return [availableText, missingText].filter(Boolean).join(' ');
+}
+
+function getOfficialHolidayRefreshMetadata_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(APP_CONFIG.holidayRefreshStoreKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    console.error('讀取官方假日刷新紀錄失敗:', error);
+    return {};
+  }
+}
+
+function setOfficialHolidayRefreshMetadata_(metadata) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      APP_CONFIG.holidayRefreshStoreKey,
+      JSON.stringify(metadata || {})
+    );
+  } catch (error) {
+    console.error('寫入官方假日刷新紀錄失敗:', error);
+  }
+}
+
 function buildOfficialHolidaySourceInfo_(options) {
   const settings = options || {};
+  const refreshMetadata = getOfficialHolidayRefreshMetadata_();
   return {
     name: '政府行政機關辦公日曆表',
     provider: '政府資料開放平臺',
@@ -929,7 +1117,9 @@ function buildOfficialHolidaySourceInfo_(options) {
     years: Array.isArray(settings.years) ? settings.years : [],
     missingYears: Array.isArray(settings.missingYears) ? settings.missingYears : [],
     count: Number(settings.count || 0),
-    message: String(settings.message || '').trim()
+    message: String(settings.message || '').trim(),
+    refreshedAt: String(settings.refreshedAt || refreshMetadata.refreshedAt || '').trim(),
+    refreshSchedule: String(settings.refreshSchedule || refreshMetadata.schedule || `每日 ${APP_CONFIG.holidayRefreshHour}:00 左右自動檢查官方 CSV`).trim()
   };
 }
 
