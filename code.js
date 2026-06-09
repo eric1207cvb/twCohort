@@ -2654,14 +2654,14 @@ function syncTemporaryDispatchColumn_(source, records, assignmentKeys, options) 
     const assignment = assignmentsByKey.get(assignmentKey);
     if (!assignment || !assignment.rowIndex) return;
 
-    const value = buildTemporaryDispatchCellValue_(records, assignmentKey);
+    const value = buildTemporaryDispatchCellValue_(records, assignmentKey, source);
     sheet.getRange(Number(assignment.rowIndex), temporaryDispatchIndex + 1).setValue(value);
     didWrite = true;
   });
   if (didWrite) invalidateDispatchSourceCache_();
 }
 
-function buildTemporaryDispatchCellValue_(records, assignmentKey) {
+function buildTemporaryDispatchCellValue_(records, assignmentKey, source) {
   const activeTemporaryRecords = normalizeActiveStoredDispatchRecords_(records)
     .filter((record) => (
       record.assignmentKey === assignmentKey
@@ -2684,16 +2684,25 @@ function buildTemporaryDispatchCellValue_(records, assignmentKey) {
   ];
   const detailLines = limitedRecords.map((record) => {
     const dateText = formatDispatchDateRange_(record.startDate, record.endDate).replace(/-/g, '/');
+    const operatorText = formatTemporaryDispatchCellOperator_(record, source);
     return [
       '臨調',
       dateText,
       record.nurseName || record.nurseEmail,
       `${formatNumber_(getDispatchDays_(record))}天/${formatNumber_(getDispatchTotalHours_(record))}h`,
       `原:${record.originalStationName || record.originalStationCode}`,
-      `至:${record.stationName || record.stationCode}`
+      `至:${record.stationName || record.stationCode}`,
+      operatorText
     ].filter(Boolean).join(' ');
   });
   return summaryLines.concat(detailLines).join('\n');
+}
+
+function formatTemporaryDispatchCellOperator_(record, source) {
+  const operator = getDispatchOperatorDisplay_(record, source);
+  const updatedAt = String(record && (record.updatedAt || record.createdAt) || '').trim();
+  if (!operator && !updatedAt) return '';
+  return `操作:${[operator, updatedAt].filter(Boolean).join(' ')}`;
 }
 
 function getStoredDispatchRecords_(options) {
