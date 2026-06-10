@@ -124,6 +124,30 @@
       color: #92400e;
     }
 
+    .station-status-link {
+      align-items: center;
+      background: #ecfdf5;
+      border-color: #99f6e4;
+      color: var(--primary-strong);
+      display: inline-flex;
+      gap: 6px;
+      justify-content: center;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .station-status-link:hover {
+      background: #ccfbf1;
+      border-color: #5eead4;
+    }
+
+    .station-status-link::after {
+      content: "↗";
+      font-size: 0.78rem;
+      line-height: 1;
+      opacity: 0.76;
+    }
+
     .btn.is-busy {
       position: relative;
       display: inline-flex;
@@ -1662,6 +1686,13 @@
         <strong id="viewer-name">讀取中</strong>
         <span id="viewer-email" class="user-meta"></span>
         <div class="user-actions">
+          <a
+            class="btn station-status-link"
+            href="https://script.google.com/a/macros/as.edu.tw/s/AKfycbw4OB7xVH96OSTfFeO_rI9GhmrnT6cbhzSYC6SDxE1J8_XN-Xbu9BB2yfLsaYAvnTtLOQ/exec"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="另開新分頁前往駐站狀態管理"
+          >駐站狀態管理</a>
           <button class="btn btn-ghost test-mode-btn hidden" type="button" id="test-mode-btn">啟用測試模式</button>
         </div>
       </div>
