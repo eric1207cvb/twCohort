@@ -10,6 +10,10 @@ const APP_CONFIG = {
   testStoreKey: 'stationNurseWorkHours:test:v1',
   auditLogStoreKey: 'stationNurseWorkHours:audit:v1',
   testAuditLogStoreKey: 'stationNurseWorkHours:audit:test:v1',
+  recordSheetPrefix: '調派紀錄_',
+  auditLogSheetPrefix: '調派操作紀錄_',
+  testRecordSheetPrefix: '測試調派紀錄_',
+  testAuditLogSheetPrefix: '測試調派操作紀錄_',
   testStationsStoreKey: 'stationNurseStations:test:v1',
   testHiddenStationCodesStoreKey: 'stationNurseStations:hidden:test:v1',
   sourceCacheKey: 'stationNurseDispatchSource:v1',
@@ -30,6 +34,8 @@ const APP_CONFIG = {
   chunkSize: 8000,
   maxRecords: 3000,
   maxAuditLogs: 1000,
+  maxDispatchRecordsPerYear: 10000,
+  maxDispatchAuditLogsPerYear: 30000,
   defaultRangeDays: 31,
   temporaryDispatchCooldownDays: 30,
   maxHoursPerRecord: 24,
@@ -42,6 +48,8 @@ const APP_CONFIG = {
 };
 
 let officialHolidayDatasetRowsCache_ = null;
+
+const DISPATCH_ANNUAL_STORE_HEADERS_ = ['年度', '資料ID', '資料JSON', '更新時間'];
 
 const FIELD_ALIASES = {
   email: ['信箱', '電子信箱', '電子郵件', 'Email', 'email', '使用者信箱', '帳號'],
@@ -2707,28 +2715,24 @@ function formatTemporaryDispatchCellOperator_(record, source) {
 
 function getStoredDispatchRecords_(options) {
   const store = getDispatchRecordStoreKeys_(options);
+  const hasLegacyRecords = hasScriptJsonStoreData_(store.storeKey);
   const cachedRecords = getCachedJson_(store.recordsCacheKey);
-  if (Array.isArray(cachedRecords)) {
+  if (Array.isArray(cachedRecords) && !hasLegacyRecords) {
     return normalizeActiveStoredDispatchRecords_(cachedRecords);
   }
 
-  const normalizedRecords = getScriptJsonStore_(store.storeKey)
-    .map(normalizeStoredDispatchRecord_)
-    .filter(Boolean);
-  const records = normalizedRecords.filter(isActiveStoredDispatchRecord_);
-  if (records.length !== normalizedRecords.length) {
-    setScriptJsonStore_(store.storeKey, records, APP_CONFIG.maxRecords);
-  }
+  migrateLegacyDispatchRecordsToAnnualSheets_(store);
+  const records = readAnnualDispatchRecords_(store);
   putCachedJson_(store.recordsCacheKey, records, APP_CONFIG.recordsCacheSeconds);
   return records;
 }
 
 function saveStoredDispatchRecords_(records, options) {
   const store = getDispatchRecordStoreKeys_(options);
+  migrateLegacyDispatchRecordsToAnnualSheets_(store);
   const normalized = normalizeActiveStoredDispatchRecords_(records)
-    .sort(compareDispatchRecords_)
-    .slice(0, APP_CONFIG.maxRecords);
-  setScriptJsonStore_(store.storeKey, normalized, APP_CONFIG.maxRecords);
+    .sort(compareDispatchRecords_);
+  writeAnnualDispatchRecords_(normalized, store);
   removeCachedValue_(store.recordsCacheKey);
   putCachedJson_(store.recordsCacheKey, normalized, APP_CONFIG.recordsCacheSeconds);
 }
@@ -2741,14 +2745,12 @@ function appendDispatchAuditLogs_(logs, options) {
     if (!normalizedLogs.length) return;
 
     const store = getDispatchRecordStoreKeys_(options);
-    const existingLogs = getScriptJsonStore_(store.auditLogStoreKey)
-      .map(normalizeDispatchAuditLog_)
-      .filter(Boolean);
+    migrateLegacyDispatchAuditLogsToAnnualSheets_(store);
+    const existingLogs = readAnnualDispatchAuditLogs_(store);
     const mergedLogs = normalizedLogs
       .concat(existingLogs)
-      .sort(compareDispatchAuditLogs_)
-      .slice(0, APP_CONFIG.maxAuditLogs);
-    setScriptJsonStore_(store.auditLogStoreKey, mergedLogs, APP_CONFIG.maxAuditLogs);
+      .sort(compareDispatchAuditLogs_);
+    writeAnnualDispatchAuditLogs_(mergedLogs, store);
   } catch (error) {
     console.error('寫入調派操作紀錄失敗:', error);
   }
@@ -2757,9 +2759,8 @@ function appendDispatchAuditLogs_(logs, options) {
 function getDispatchAuditLogs_(allowedStationCodes, filters, options) {
   const store = getDispatchRecordStoreKeys_(options);
   const normalizedFilters = filters || {};
-  return getScriptJsonStore_(store.auditLogStoreKey)
-    .map(normalizeDispatchAuditLog_)
-    .filter(Boolean)
+  migrateLegacyDispatchAuditLogsToAnnualSheets_(store);
+  return readAnnualDispatchAuditLogs_(store)
     .filter((log) => {
       if (allowedStationCodes) {
         const allowedTarget = allowedStationCodes.has(log.stationCode);
@@ -2786,7 +2787,9 @@ function getDispatchRecordStoreKeys_(options) {
   return {
     storeKey: testMode ? APP_CONFIG.testStoreKey : APP_CONFIG.storeKey,
     recordsCacheKey: testMode ? APP_CONFIG.testRecordsCacheKey : APP_CONFIG.recordsCacheKey,
-    auditLogStoreKey: testMode ? APP_CONFIG.testAuditLogStoreKey : APP_CONFIG.auditLogStoreKey
+    auditLogStoreKey: testMode ? APP_CONFIG.testAuditLogStoreKey : APP_CONFIG.auditLogStoreKey,
+    recordSheetPrefix: testMode ? APP_CONFIG.testRecordSheetPrefix : APP_CONFIG.recordSheetPrefix,
+    auditLogSheetPrefix: testMode ? APP_CONFIG.testAuditLogSheetPrefix : APP_CONFIG.auditLogSheetPrefix
   };
 }
 
@@ -2794,6 +2797,231 @@ function isTestDispatchRecordStore_(options) {
   if (!options) return false;
   if (options.viewer && options.viewer.testMode) return true;
   return Boolean(options.testMode);
+}
+
+function migrateLegacyDispatchRecordsToAnnualSheets_(store) {
+  if (!store || !hasScriptJsonStoreData_(store.storeKey)) return;
+  const legacyRecords = getScriptJsonStore_(store.storeKey)
+    .map(normalizeStoredDispatchRecord_)
+    .filter(isActiveStoredDispatchRecord_);
+  if (legacyRecords.length) {
+    const annualRecords = readAnnualDispatchRecords_(store);
+    writeAnnualDispatchRecords_(legacyRecords.concat(annualRecords), store);
+  }
+  clearScriptJsonStore_(store.storeKey);
+  removeCachedValue_(store.recordsCacheKey);
+}
+
+function migrateLegacyDispatchAuditLogsToAnnualSheets_(store) {
+  if (!store || !hasScriptJsonStoreData_(store.auditLogStoreKey)) return;
+  const legacyLogs = getScriptJsonStore_(store.auditLogStoreKey)
+    .map(normalizeDispatchAuditLog_)
+    .filter(Boolean);
+  if (legacyLogs.length) {
+    const annualLogs = readAnnualDispatchAuditLogs_(store);
+    writeAnnualDispatchAuditLogs_(legacyLogs.concat(annualLogs), store);
+  }
+  clearScriptJsonStore_(store.auditLogStoreKey);
+}
+
+function readAnnualDispatchRecords_(store) {
+  const records = [];
+  getAnnualJsonStoreYears_(store.recordSheetPrefix).forEach((year) => {
+    records.push(...readAnnualJsonStore_(store.recordSheetPrefix, year, normalizeStoredDispatchRecord_));
+  });
+  return mergeDispatchRecordsById_(records)
+    .filter(isActiveStoredDispatchRecord_)
+    .sort(compareDispatchRecords_);
+}
+
+function writeAnnualDispatchRecords_(records, store) {
+  const normalizedRecords = mergeDispatchRecordsById_(records)
+    .filter(isActiveStoredDispatchRecord_)
+    .sort(compareDispatchRecords_);
+  const years = new Set(getAnnualJsonStoreYears_(store.recordSheetPrefix));
+  normalizedRecords.forEach((record) => years.add(getDispatchRecordAnnualYear_(record)));
+  Array.from(years)
+    .sort()
+    .forEach((year) => {
+      const recordsForYear = normalizedRecords
+        .filter((record) => getDispatchRecordAnnualYear_(record) === year)
+        .slice(0, APP_CONFIG.maxDispatchRecordsPerYear);
+      writeAnnualJsonStore_(store.recordSheetPrefix, year, recordsForYear, normalizeStoredDispatchRecord_, compareDispatchRecords_, APP_CONFIG.maxDispatchRecordsPerYear);
+    });
+}
+
+function readAnnualDispatchAuditLogs_(store) {
+  const logs = [];
+  getAnnualJsonStoreYears_(store.auditLogSheetPrefix).forEach((year) => {
+    logs.push(...readAnnualJsonStore_(store.auditLogSheetPrefix, year, normalizeDispatchAuditLog_));
+  });
+  return mergeDispatchAuditLogsById_(logs)
+    .sort(compareDispatchAuditLogs_);
+}
+
+function writeAnnualDispatchAuditLogs_(logs, store) {
+  const normalizedLogs = mergeDispatchAuditLogsById_(logs)
+    .sort(compareDispatchAuditLogs_);
+  const years = new Set(getAnnualJsonStoreYears_(store.auditLogSheetPrefix));
+  normalizedLogs.forEach((log) => years.add(getDispatchAuditLogAnnualYear_(log)));
+  Array.from(years)
+    .sort()
+    .forEach((year) => {
+      const logsForYear = normalizedLogs
+        .filter((log) => getDispatchAuditLogAnnualYear_(log) === year)
+        .slice(0, APP_CONFIG.maxDispatchAuditLogsPerYear);
+      writeAnnualJsonStore_(store.auditLogSheetPrefix, year, logsForYear, normalizeDispatchAuditLog_, compareDispatchAuditLogs_, APP_CONFIG.maxDispatchAuditLogsPerYear);
+    });
+}
+
+function mergeDispatchRecordsById_(records) {
+  const byId = new Map();
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const normalized = normalizeStoredDispatchRecord_(record);
+    if (!normalized || !normalized.id) return;
+    byId.set(normalized.id, normalized);
+  });
+  return Array.from(byId.values());
+}
+
+function mergeDispatchAuditLogsById_(logs) {
+  const byId = new Map();
+  (Array.isArray(logs) ? logs : []).forEach((log) => {
+    const normalized = normalizeDispatchAuditLog_(log);
+    if (!normalized || !normalized.id) return;
+    byId.set(normalized.id, normalized);
+  });
+  return Array.from(byId.values());
+}
+
+function readAnnualJsonStore_(sheetPrefix, year, normalizeFn) {
+  const sheet = getAnnualJsonStoreSheet_(sheetPrefix, year, false);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, DISPATCH_ANNUAL_STORE_HEADERS_.length).getValues();
+  return values
+    .map((row) => {
+      const raw = String(row[2] || '').trim();
+      if (!raw) return null;
+      try {
+        return normalizeFn(JSON.parse(raw));
+      } catch (error) {
+        console.error(`解析年度調派資料失敗：${sheet.getName()}`, error);
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function writeAnnualJsonStore_(sheetPrefix, year, items, normalizeFn, compareFn, maxItems) {
+  const normalizedYear = normalizeAnnualStoreYear_(year);
+  const normalizedItems = (Array.isArray(items) ? items : [])
+    .map(normalizeFn)
+    .filter(Boolean)
+    .sort(compareFn)
+    .slice(0, Math.max(0, Number(maxItems || 0)));
+  const existingSheet = getAnnualJsonStoreSheet_(sheetPrefix, normalizedYear, false);
+  if (!normalizedItems.length && !existingSheet) return;
+
+  const sheet = existingSheet || getAnnualJsonStoreSheet_(sheetPrefix, normalizedYear, true);
+  ensureAnnualJsonStoreHeader_(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, DISPATCH_ANNUAL_STORE_HEADERS_.length).clearContent();
+  }
+  if (!normalizedItems.length) return;
+
+  ensureSheetCapacity_(sheet, normalizedItems.length + 1, DISPATCH_ANNUAL_STORE_HEADERS_.length);
+  const updatedAt = formatTimestamp_(new Date());
+  const rows = normalizedItems.map((item) => [
+    normalizedYear,
+    getAnnualJsonItemId_(item),
+    JSON.stringify(item),
+    updatedAt
+  ]);
+  sheet.getRange(2, 1, rows.length, DISPATCH_ANNUAL_STORE_HEADERS_.length).setValues(rows);
+}
+
+function getAnnualJsonStoreYears_(sheetPrefix) {
+  const spreadsheet = getDispatchSourceSpreadsheet_();
+  const pattern = new RegExp(`^${escapeRegExp_(sheetPrefix)}(\\d{4})$`);
+  return spreadsheet.getSheets()
+    .map((sheet) => {
+      const matched = String(sheet.getName() || '').match(pattern);
+      return matched ? Number(matched[1]) : 0;
+    })
+    .filter((year) => Number.isInteger(year) && year >= 2020 && year <= 2100)
+    .sort((a, b) => a - b);
+}
+
+function getAnnualJsonStoreSheet_(sheetPrefix, year, createIfMissing) {
+  const normalizedYear = normalizeAnnualStoreYear_(year);
+  const sheetName = `${sheetPrefix}${normalizedYear}`;
+  const spreadsheet = getDispatchSourceSpreadsheet_();
+  let sheet = getSheetByNameOrNull_(spreadsheet, sheetName);
+  if (!sheet && createIfMissing) {
+    sheet = spreadsheet.insertSheet(sheetName);
+    try {
+      sheet.hideSheet();
+    } catch (error) {
+      console.error(`隱藏年度調派資料表失敗：${sheetName}`, error);
+    }
+    ensureAnnualJsonStoreHeader_(sheet);
+  }
+  if (sheet) ensureAnnualJsonStoreHeader_(sheet);
+  return sheet;
+}
+
+function ensureAnnualJsonStoreHeader_(sheet) {
+  if (!sheet) return;
+  ensureSheetCapacity_(sheet, 1, DISPATCH_ANNUAL_STORE_HEADERS_.length);
+  const currentHeaders = sheet.getRange(1, 1, 1, DISPATCH_ANNUAL_STORE_HEADERS_.length).getDisplayValues()[0]
+    .map((header) => String(header || '').trim());
+  const needsHeader = DISPATCH_ANNUAL_STORE_HEADERS_.some((header, index) => currentHeaders[index] !== header);
+  if (needsHeader) {
+    sheet.getRange(1, 1, 1, DISPATCH_ANNUAL_STORE_HEADERS_.length).setValues([DISPATCH_ANNUAL_STORE_HEADERS_]);
+    sheet.setFrozenRows(1);
+  }
+}
+
+function ensureSheetCapacity_(sheet, minRows, minColumns) {
+  if (!sheet) return;
+  const targetRows = Math.max(1, Number(minRows || 1));
+  const targetColumns = Math.max(1, Number(minColumns || 1));
+  if (sheet.getMaxRows() < targetRows) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), targetRows - sheet.getMaxRows());
+  }
+  if (sheet.getMaxColumns() < targetColumns) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), targetColumns - sheet.getMaxColumns());
+  }
+}
+
+function getAnnualJsonItemId_(item) {
+  return String(item && (item.id || item.recordId || buildLegacyDispatchRecordVersion_(item)) || '').trim();
+}
+
+function getDispatchRecordAnnualYear_(record) {
+  return getYearFromDateString_(record && (record.startDate || record.workDate || record.endDate))
+    || normalizeAnnualStoreYear_(getTodayDateString_().slice(0, 4));
+}
+
+function getDispatchAuditLogAnnualYear_(log) {
+  return getYearFromDateString_(log && (log.actionDate || log.occurredAt || log.startDate || log.endDate))
+    || normalizeAnnualStoreYear_(getTodayDateString_().slice(0, 4));
+}
+
+function getYearFromDateString_(value) {
+  const matched = String(value || '').trim().match(/^(\d{4})/);
+  const year = matched ? Number(matched[1]) : 0;
+  return Number.isInteger(year) && year >= 2020 && year <= 2100 ? year : 0;
+}
+
+function normalizeAnnualStoreYear_(value) {
+  const year = Number(value || getTodayDateString_().slice(0, 4));
+  if (!Number.isInteger(year) || year < 2020 || year > 2100) {
+    throw new Error('年度調派資料表年份格式錯誤。');
+  }
+  return year;
 }
 
 function buildDispatchAuditLog_(action, record, options) {
@@ -3000,6 +3228,12 @@ function getScriptJsonStore_(baseKey) {
   }
 }
 
+function hasScriptJsonStoreData_(baseKey) {
+  if (!baseKey) return false;
+  const properties = PropertiesService.getScriptProperties();
+  return Number(properties.getProperty(`${baseKey}:chunkCount`) || 0) > 0;
+}
+
 function setScriptJsonStore_(baseKey, records, maxRecords) {
   const normalizedRecords = Array.isArray(records) ? records.slice(0, maxRecords) : [];
   const raw = JSON.stringify(normalizedRecords);
@@ -3021,6 +3255,16 @@ function setScriptJsonStore_(baseKey, records, maxRecords) {
   for (let index = chunks.length; index < previousChunkCount; index += 1) {
     properties.deleteProperty(`${baseKey}:chunk:${index}`);
   }
+}
+
+function clearScriptJsonStore_(baseKey) {
+  if (!baseKey) return;
+  const properties = PropertiesService.getScriptProperties();
+  const previousChunkCount = Number(properties.getProperty(`${baseKey}:chunkCount`) || 0);
+  for (let index = 0; index < previousChunkCount; index += 1) {
+    properties.deleteProperty(`${baseKey}:chunk:${index}`);
+  }
+  properties.deleteProperty(`${baseKey}:chunkCount`);
 }
 
 function compareDispatchRecords_(a, b) {
