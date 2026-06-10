@@ -40,7 +40,7 @@ Use:
 - `ENV.DISPATCH_PERSONNEL_SHEET_GID` and `ENV.DISPATCH_ASSIGNMENT_SHEET_GID` should be kept current to avoid reading the wrong same-named tab.
 - `ENV.MASTER_DATA_READ_ONLY` should remain `true` unless the task explicitly requires changing master-data write behavior.
 - `ENV.SYNC_TEMPORARY_DISPATCH_COLUMN` controls whether saved temporary dispatch summaries are written back to the `臨時調配` column in `人員職務配置`.
-- `ENV.TESTER_EMAILS` and `ENV.TESTER_TITLES` gate test mode. Test mode uses separate Script Properties keys for dispatch records, audit logs, created stations, and hidden station codes.
+- `ENV.TESTER_EMAILS` and `ENV.TESTER_TITLES` gate test mode. Test mode uses separate annual dispatch/audit sheets plus Script Properties keys for created stations and hidden station codes.
 - `ENV.DISPATCH_HOLIDAY_DATA_URL`, when present, overrides the official government holiday CSV URL.
 
 ## Backend / Frontend Contract
@@ -48,7 +48,7 @@ Use:
 - Public backend functions called from the frontend include `getDispatchAppData`, `getDispatchFairnessStats`, `saveWorkHourDispatch`, `saveWorkHourDispatchBatch`, `savePendingWorkHourDispatch`, `assignPendingWorkHourDispatch`, `deleteWorkHourDispatch`, `createStation`, and `deleteStation`.
 - Holiday maintenance functions include `authorizeOfficialHolidayCalendar`, `refreshOfficialHolidayCalendarCache`, `installOfficialHolidayRefreshTrigger`, and `removeOfficialHolidayRefreshTrigger`. These depend on `UrlFetchApp`, `ScriptApp`, `CacheService`, and `PropertiesService` scopes in `appsscript.json`.
 - Dispatch mutations must keep `LockService` protection, record version checks, overlap checks, temporary dispatch cooldown checks, and audit log writes intact.
-- Saved dispatch records and audit logs are stored as JSON chunks in Script Properties, not in a visible result sheet. Keep `APP_CONFIG.chunkSize`, `maxRecords`, and `maxAuditLogs` in mind when changing record shape.
+- Saved dispatch records and audit logs are stored in hidden annual sheets such as `調派紀錄_2026` and `調派操作紀錄_2026`. Legacy Script Properties chunks are migrated into those annual sheets on first read. Keep `APP_CONFIG.maxDispatchRecordsPerYear` and `APP_CONFIG.maxDispatchAuditLogsPerYear` in mind when changing record shape.
 - Source data is read with alias-based header lookup. If you add source columns or rename existing columns, update `FIELD_ALIASES` and any writer logic such as `appendStationRecord_`, `ensureStationManagerAssignment_`, and `syncTemporaryDispatchColumn_`.
 - Preserve response shapes used by `index.html`: frontend code expects `success`, `message`, `viewer`, `stations`, `nurses`, `records`, `scheduleRecords`, `currentRecords`, `holidays`, `holidaySource`, `filters`, `shiftOptions`, and `managerCandidates` from `getDispatchAppData`.
 
