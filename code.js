@@ -2072,11 +2072,19 @@ function normalizeCreateStationPayload_(payload, source) {
     throw new Error(`駐站代碼 ${code} 已存在。`);
   }
 
-  const name = normalizeShortText_(payload.name, '駐站中文名稱', 80);
+  const name = normalizeShortText_(payload.name, '駐站中文名稱', 80, { stripControl: true, guardInjection: true });
   if (!name) {
     throw new Error('請輸入駐站中文名稱。');
   }
-  const alias = normalizeShortText_(payload.alias || '', '駐站別名', 40);
+  // 中文名稱唯一性檢查：避免兩個代碼不同但名稱相同的駐站，造成調派選單／報表無法區分（Issue #10）。
+  const duplicateStation = (source.stations || []).find((station) => {
+    const candidateNames = [station.name, station.alias].map((value) => String(value || '').trim());
+    return candidateNames.indexOf(name) >= 0;
+  });
+  if (duplicateStation) {
+    throw new Error(`駐站名稱「${name}」已存在，請改用其他名稱。`);
+  }
+  const alias = normalizeShortText_(payload.alias || '', '駐站別名', 40, { stripControl: true, guardInjection: true });
   const managerEmail = normalizeEmail_(payload.managerEmail);
   if (!managerEmail) {
     throw new Error('請選擇駐站管理員。');
@@ -2096,7 +2104,7 @@ function normalizeCreateStationPayload_(payload, source) {
     name,
     alias,
     managerEmail,
-    managerName: manager.name || manager.email,
+    managerName: normalizeShortText_(manager.name || manager.email, '管理員姓名', 80, { stripControl: true, guardInjection: true }),
     isIsoCertified: Boolean(payload.isIsoCertified)
   };
 }
@@ -2283,8 +2291,10 @@ function appendStationRecord_(sheet, station) {
   const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0];
   const columnCount = Math.max(sheet.getLastColumn(), 9);
   const row = new Array(columnCount).fill('');
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgType, 0)] = station.typeLabel;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.level, 1)] = getEnvString_('DISPATCH_STATION_LEVEL', '3');
+  // 駐站（含一般／委外／行動收案）一律屬「行政」組織類型、層級 5（Issue #12）。
+  // 委外駐站的識別改由代碼前綴 GRP-CO-EX- 判定，與此處組織類型標籤無關。
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgType, 0)] = '行政';
+  row[getWritableColumnIndex_(headers, FIELD_ALIASES.level, 1)] = getEnvString_('DISPATCH_STATION_LEVEL', '5');
   row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgCode, 2)] = station.code;
   row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgName, 3)] = station.name;
   row[getWritableColumnIndex_(headers, FIELD_ALIASES.alias, 4)] = station.alias;
@@ -2292,31 +2302,6 @@ function appendStationRecord_(sheet, station) {
   row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerEmail, 6)] = station.managerEmail;
   row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerName, 7)] = station.managerName;
   row[getWritableColumnIndex_(headers, FIELD_ALIASES.iso, 8)] = station.isIsoCertified ? 'V' : '';
-  sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
-}
-
-function ensureStationManagerAssignment_(sheet, assignments, station) {
-  const hasManagerAssignment = (Array.isArray(assignments) ? assignments : []).some((assignment) => (
-    normalizeEmail_(assignment.email) === station.managerEmail
-    && normalizeOrgCode_(assignment.orgCode) === station.code
-    && isStationManagerAssignment_(assignment)
-  ));
-  if (hasManagerAssignment) return;
-
-  const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0];
-  const columnCount = Math.max(sheet.getLastColumn(), 9);
-  const row = new Array(columnCount).fill('');
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.email, 0)] = station.managerEmail;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.name, 1)] = station.managerName;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgCode, 2)] = station.code;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.orgName, 3)] = station.alias || station.name;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.title, 4)] = APP_CONFIG.stationManagerTitle;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerEmail, 5)] = station.managerEmail;
-  row[getWritableColumnIndex_(headers, FIELD_ALIASES.managerName, 6)] = station.managerName;
-  const statusIndex = findHeaderIndex_(headers, FIELD_ALIASES.status);
-  if (statusIndex >= 0) row[statusIndex] = '在職';
-  const temporaryDispatchIndex = findHeaderIndex_(headers, FIELD_ALIASES.temporaryDispatch);
-  if (temporaryDispatchIndex >= 0) row[temporaryDispatchIndex] = '';
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
 }
 
@@ -2372,6 +2357,85 @@ function deleteStationManagerAssignmentRows_(sheet, stationCode) {
   });
 
   deleteRowsDescending_(sheet, rowIndexes);
+}
+
+// === 駐站刪除歷史封存（Issue #8）==========================================
+// 採「封存表」策略：刪除前把即將被移除的整列原樣複製到隱藏的歷史封存表，
+// 完整保留 I 欄臨調摘要與所有欄位，滿足稽核與歷史溯源需求，且不更動既有讀取邏輯。
+function archiveStationRowsBeforeDelete_(source, stationCode, context) {
+  const spreadsheet = getDispatchSourceSpreadsheet_();
+  const normalizedStationCode = normalizeOrgCode_(stationCode);
+  const archiveContext = context || {};
+
+  if (source.orgSheet) {
+    appendRowsToArchive_(
+      spreadsheet,
+      getEnvString_('DISPATCH_ARCHIVE_ORG_SHEET_NAME', '歷史組織架構樹'),
+      source.orgSheet,
+      collectArchivableRows_(source.orgSheet, (row, indices) => (
+        normalizeOrgCode_(row[indices.orgCodeIndex]) === normalizedStationCode
+      )),
+      archiveContext
+    );
+  }
+
+  if (source.assignmentSheet) {
+    appendRowsToArchive_(
+      spreadsheet,
+      getEnvString_('DISPATCH_ARCHIVE_ASSIGNMENT_SHEET_NAME', '歷史人員職務配置'),
+      source.assignmentSheet,
+      collectArchivableRows_(source.assignmentSheet, (row, indices) => (
+        normalizeOrgCode_(row[indices.orgCodeIndex]) === normalizedStationCode
+        && isStationManagerAssignment_({ title: String(row[indices.titleIndex] || '').trim() })
+      )),
+      archiveContext
+    );
+  }
+}
+
+function collectArchivableRows_(sheet, predicate) {
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return [];
+  const headers = values[0];
+  const indices = {
+    orgCodeIndex: findHeaderIndex_(headers, FIELD_ALIASES.orgCode, 2),
+    titleIndex: findHeaderIndex_(headers, FIELD_ALIASES.title, 4)
+  };
+  return values.slice(1).filter((row) => predicate(row, indices));
+}
+
+function appendRowsToArchive_(spreadsheet, archiveSheetName, sourceSheet, rows, context) {
+  if (!rows || !rows.length) return;
+  const archiveSheet = getOrCreateArchiveSheet_(spreadsheet, archiveSheetName, sourceSheet);
+  const prefix = [
+    String(context.deletedAt || ''),
+    String(context.operator || ''),
+    sourceSheet.getName()
+  ];
+  const dataWidth = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const values = rows.map((row) => {
+    const padded = row.slice();
+    while (padded.length < dataWidth) padded.push('');
+    return prefix.concat(padded);
+  });
+  archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
+  SpreadsheetApp.flush();
+}
+
+function getOrCreateArchiveSheet_(spreadsheet, archiveSheetName, sourceSheet) {
+  let archiveSheet = spreadsheet.getSheetByName(archiveSheetName);
+  if (!archiveSheet) {
+    archiveSheet = spreadsheet.insertSheet(archiveSheetName);
+    const sourceHeaders = sourceSheet
+      .getRange(1, 1, 1, Math.max(1, sourceSheet.getLastColumn()))
+      .getDisplayValues()[0];
+    const headerRow = ['封存時間', '刪除人員', '來源工作表'].concat(sourceHeaders);
+    archiveSheet.getRange(1, 1, 1, headerRow.length).setValues([headerRow]);
+    archiveSheet.setFrozenRows(1);
+    archiveSheet.hideSheet();
+    SpreadsheetApp.flush();
+  }
+  return archiveSheet;
 }
 
 function findRowsByOrgCode_(sheet, stationCode) {
@@ -2444,7 +2508,9 @@ function normalizeWorkHourPayload_(payload, context, viewerEmail) {
   const originalStationName = String(member.orgName || originalStationCode).trim();
   const isTemporaryDispatch = Boolean(originalStationCode && originalStationCode !== station.code);
   const isTestMode = Boolean(context && context.viewer && context.viewer.testMode);
-  if (!isTestMode && !isTemporaryDispatch && !isExternalTarget && !isMobileCaseDispatch && context.managedStationCodes && !context.managedStationCodes.has(member.orgCode)) {
+  // 業務規則：所有駐站管理員都可調派任一駐站的護理師，故具管理員身分者跳過此限制（Issue #11）。
+  const isStationManagerViewer = Boolean(context && context.viewer && context.viewer.isStationManager);
+  if (!isTestMode && !isStationManagerViewer && !isTemporaryDispatch && !isExternalTarget && !isMobileCaseDispatch && context.managedStationCodes && !context.managedStationCodes.has(member.orgCode)) {
     throw new Error('正常班只能調派自己管理範圍內的護理師。');
   }
 
@@ -3991,8 +4057,18 @@ function timeToMinutes_(value) {
   return parts[0] * 60 + parts[1];
 }
 
-function normalizeShortText_(value, label, maxLength) {
-  const normalized = String(value || '').trim();
+function normalizeShortText_(value, label, maxLength, options) {
+  const settings = options || {};
+  let normalized = String(value || '');
+  // 寫入試算表的欄位需移除內部不可見字元（換行、製表、其他控制碼），避免資料雜亂（Issue #10）。
+  if (settings.stripControl) {
+    normalized = normalized.replace(/[\x00-\x1F\x7F]+/g, ' ').replace(/ {2,}/g, ' ');
+  }
+  normalized = normalized.trim();
+  // 防止試算表公式注入：開頭為 = + - @ 或殘留控制字元時補上單引號前綴（Issue #10）。
+  if (settings.guardInjection && normalized && /^[=+\-@\t\r\n]/.test(normalized)) {
+    normalized = `'${normalized}`;
+  }
   if (normalized.length > maxLength) {
     throw new Error(`${label}不可超過 ${maxLength} 個字。`);
   }
