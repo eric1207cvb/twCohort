@@ -1492,6 +1492,10 @@
       font-weight: 900;
     }
 
+    .code-preview.is-invalid {
+      color: #c0392b;
+    }
+
     .loading-screen {
       padding: 48px 24px;
       color: var(--muted);
@@ -2067,6 +2071,7 @@
       isAssigningPendingRecord: false,
       pendingAssignmentRecordId: '',
       stationModalType: 'general',
+      isStationFormDirty: false,
       testMode: false,
       scheduleView: 'day',
       scheduleYear: new Date().getFullYear(),
@@ -2417,6 +2422,15 @@
       });
       el.stationCodeSuffix.addEventListener('input', updateStationCodePreview);
       el.stationForm.addEventListener('submit', saveStation);
+      // 追蹤表單修改狀態，供關閉攔截與分頁離開提示使用（Issue #9）。
+      el.stationForm.addEventListener('input', markStationFormDirty);
+      el.stationForm.addEventListener('change', markStationFormDirty);
+      window.addEventListener('beforeunload', (event) => {
+        if (state.isStationFormDirty && !el.stationModal.classList.contains('hidden')) {
+          event.preventDefault();
+          event.returnValue = '';
+        }
+      });
       window.addEventListener('focus', () => refreshRecordsNow('focus'));
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refreshRecordsNow('visible');
@@ -3438,8 +3452,18 @@
 
     function closeStationModal(force) {
       if (state.isCreatingStation && !force) return;
+      // 表單已修改且非強制關閉時，跳出確認以避免誤觸遮罩／關閉按鈕造成資料遺失（Issue #9）。
+      if (!force && state.isStationFormDirty
+        && !window.confirm('您有尚未儲存的駐站資料，確定要關閉並放棄輸入嗎？')) {
+        return;
+      }
+      state.isStationFormDirty = false;
       el.stationModal.classList.add('hidden');
       setStationStatus('');
+    }
+
+    function markStationFormDirty() {
+      state.isStationFormDirty = true;
     }
 
     function resetStationForm() {
@@ -3448,6 +3472,8 @@
       renderStationManagerOptions();
       setStationModalType('general');
       setStationStatus('');
+      // 重新開啟／重置表單時清除 dirty 狀態，避免沿用上一次的修改旗標（Issue #9）。
+      state.isStationFormDirty = false;
     }
 
     function setStationModalType(type) {
@@ -3462,11 +3488,26 @@
     }
 
     function updateStationCodePreview() {
-      const prefix = state.stationModalType === 'external'
-        ? EXTERNAL_STATION_CODE_PREFIX
-        : STATION_CODE_PREFIX;
-      const suffix = normalizeStationSuffixInput(el.stationCodeSuffix.value, state.stationModalType === 'external');
-      el.stationCodePreview.textContent = `完整代碼：${prefix}${suffix}`;
+      const isExternal = state.stationModalType === 'external';
+      const prefix = isExternal ? EXTERNAL_STATION_CODE_PREFIX : STATION_CODE_PREFIX;
+      const suffix = normalizeStationSuffixInput(el.stationCodeSuffix.value, isExternal);
+      // 即時防呆：輸入當下就檢核尾碼格式並以紅字提示，不必等送出後才由後端報錯（Issue #10）。
+      const suffixError = validateStationSuffix(suffix, isExternal);
+      el.stationCodePreview.classList.toggle('is-invalid', Boolean(suffixError));
+      el.stationCodePreview.textContent = suffixError
+        ? `完整代碼：${prefix}${suffix}（${suffixError}）`
+        : `完整代碼：${prefix}${suffix}`;
+    }
+
+    function validateStationSuffix(suffix, isExternal) {
+      if (!suffix) return '請輸入英文尾碼';
+      if (!/^[A-Z0-9][A-Z0-9-]{0,23}$/.test(suffix)) {
+        return '僅能使用大寫英文、數字與連字號，最多 24 碼';
+      }
+      if (!isExternal && suffix.indexOf('EX-') === 0) {
+        return '一般駐站不可用 EX- 開頭，請切換為委外駐站';
+      }
+      return '';
     }
 
     function normalizeStationSuffixInput(value, isExternal) {
@@ -3483,6 +3524,21 @@
       event.preventDefault();
       if (state.isCreatingStation) return;
 
+      // 送出前先做基本防呆，把錯誤擋在輸入階段而非提交後（Issue #10）。
+      const isExternal = state.stationModalType === 'external';
+      const codeSuffix = normalizeStationSuffixInput(el.stationCodeSuffix.value, isExternal);
+      const suffixError = validateStationSuffix(codeSuffix, isExternal);
+      if (suffixError) {
+        setStationStatus(`${suffixError}。`, 'error');
+        el.stationCodeSuffix.focus();
+        return;
+      }
+      if (!el.stationName.value.trim()) {
+        setStationStatus('請輸入駐站中文名稱。', 'error');
+        el.stationName.focus();
+        return;
+      }
+
       const managerEmail = resolveStationManagerEmail(el.stationManager.value);
       if (!managerEmail) {
         setStationStatus(el.stationManager.value ? '請從候選名單選擇駐站管理員。' : '請選擇駐站管理員。', 'error');
@@ -3492,7 +3548,7 @@
 
       const payload = {
         stationType: state.stationModalType,
-        codeSuffix: normalizeStationSuffixInput(el.stationCodeSuffix.value, state.stationModalType === 'external'),
+        codeSuffix,
         name: el.stationName.value,
         alias: el.stationAlias.value,
         managerEmail,
