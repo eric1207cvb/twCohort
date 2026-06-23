@@ -5,6 +5,9 @@ const APP_CONFIG = {
   assignmentSheetName: '人員職務配置',
   stationCodePrefix: 'GRP-CO-',
   externalStationCodePrefix: 'GRP-CO-EX-',
+  mobileStationCodePrefix: 'GRP-CO-protable-',
+  mobileStationSheetName: '行動駐站',
+  stationAllocationSheetName: '駐站調配',
   stationManagerTitle: '駐站管理員',
   storeKey: 'stationNurseWorkHours:v1',
   testStoreKey: 'stationNurseWorkHours:test:v1',
@@ -50,6 +53,12 @@ const APP_CONFIG = {
 let officialHolidayDatasetRowsCache_ = null;
 
 const DISPATCH_ANNUAL_STORE_HEADERS_ = ['年度', '資料ID', '資料JSON', '更新時間'];
+
+// 行動駐站工作表表頭（A-G，以 F/G 軟刪除）。
+const MOBILE_STATION_SHEET_HEADERS_ = ['行動駐站代號', '駐站中文名稱', '駐站管理員email', '新增日期', '新增人員', '刪除日期', '刪除人員'];
+
+// 駐站調配工作表表頭（以「資料ID」= assignmentKey 為主鍵 upsert，取代原本寫回人員職務配置的「臨時調配」欄）。
+const STATION_ALLOCATION_SHEET_HEADERS_ = ['資料ID', '信箱', '姓名', '基底駐站代號', '臨調摘要', '更新時間'];
 
 const FIELD_ALIASES = {
   email: ['信箱', '電子信箱', '電子郵件', 'Email', 'email', '使用者信箱', '帳號'],
@@ -306,6 +315,8 @@ function getDispatchFairnessStats(payload) {
     });
     const allowedStationCodes = new Set(context.stations.map((station) => station.code));
     const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
+    // 每位人員的「基底駐站集合」（人員職務配置中所有駐站代號）；用於排除基底站之間互調，不計入每月調派計次。
+    const baseStationsByEmail = buildBaseStationsByEmail_(source.assignments);
     const records = loadDispatchRecords_(allowedStationCodes, {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
@@ -318,6 +329,7 @@ function getDispatchFairnessStats(payload) {
     })
       .filter((record) => isTemporaryDispatchRecord_(record))
       .filter((record) => !isPendingAssignmentRecord_(record))
+      .filter((record) => isCountableDispatchRecord_(record, baseStationsByEmail))
       .filter((record) => !filters.stationCode || record.stationCode === filters.stationCode || record.originalStationCode === filters.stationCode);
 
     return {
@@ -339,6 +351,114 @@ function getDispatchFairnessStats(payload) {
       message: error && error.message ? error.message : '無法讀取年度臨時徵調統計。'
     };
   }
+}
+
+// 以「選定日期」解析各駐站真實人數（基底 − 當日調出 + 當日調入）與「需要被調派」的人員清單。
+function getStationHeadcountByDate(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+
+  try {
+    if (!viewerEmail) {
+      throw new Error('無法辨識目前登入帳號。');
+    }
+    const asOfDate = normalizeDate_(payload && payload.asOfDate ? payload.asOfDate : getTodayDateString_(), '查詢日期');
+    const source = loadDispatchSource_();
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: Boolean(payload && payload.testMode)
+    });
+    const result = resolveStationHeadcountAtDate_(source, context, asOfDate, { testMode: context.viewer.testMode });
+    return { success: true, asOfDate, stations: result.stations, needsDispatch: result.needsDispatch };
+  } catch (error) {
+    console.error('讀取駐站真實人數失敗:', error);
+    return {
+      success: false,
+      message: error && error.message ? error.message : '無法讀取駐站真實人數。'
+    };
+  }
+}
+
+// 真實人數解析：與前端 getStationCountAtDate 同演算法（baseCount − 調出 + 調入，by assignmentKey 去重），後端為單一真相。
+function resolveStationHeadcountAtDate_(source, context, dateString, options) {
+  const allowedStationCodes = new Set(context.stations.map((station) => station.code));
+  const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
+  const allRecords = loadDispatchRecords_(allowedStationCodes, {
+    dateFrom: dateString,
+    dateTo: dateString,
+    stationCode: '',
+    nurseEmail: ''
+  }, {
+    testMode: Boolean(options && options.testMode),
+    includeOriginalStation: true,
+    assignmentAvailabilityByKey
+  });
+
+  // 已能判定當日所在站的人員（不論臨調或常班，只要非待指派且有對應人選）。
+  const resolvedEmails = new Set(allRecords
+    .filter((record) => !isPendingAssignmentRecord_(record))
+    .map((record) => normalizeEmail_(record.nurseEmail))
+    .filter(Boolean));
+
+  // 僅臨調紀錄影響各站人數增減（常班在基底站，不移動）。
+  const incomingByStation = new Map();
+  const outgoingByStation = new Map();
+  allRecords
+    .filter((record) => isTemporaryDispatchRecord_(record) && !isPendingAssignmentRecord_(record) && !record.isNurseUnavailable)
+    .forEach((record) => {
+      const target = normalizeOrgCode_(record.stationCode);
+      const origin = normalizeOrgCode_(record.originalStationCode);
+      if (target) {
+        if (!incomingByStation.has(target)) incomingByStation.set(target, new Set());
+        incomingByStation.get(target).add(record.assignmentKey);
+      }
+      if (origin) {
+        if (!outgoingByStation.has(origin)) outgoingByStation.set(origin, new Set());
+        outgoingByStation.get(origin).add(record.assignmentKey);
+      }
+    });
+
+  const stations = context.stations.map((station) => {
+    const incoming = (incomingByStation.get(station.code) || new Set()).size;
+    const outgoing = (outgoingByStation.get(station.code) || new Set()).size;
+    const baseCount = Number(station.memberCount || 0);
+    return {
+      code: station.code,
+      name: station.name || station.code,
+      baseCount,
+      incoming,
+      outgoing,
+      realCount: Math.max(0, baseCount - outgoing + incoming)
+    };
+  });
+
+  // 需要被調派：可調配收案人員、有多個基底駐站、且當日無紀錄可判定其所在站。
+  const nurseBaseByEmail = new Map();
+  (Array.isArray(source.assignments) ? source.assignments : []).forEach((assignment) => {
+    if (!assignment || !isNurseAssignment_(assignment) || assignment.isUnavailable) return;
+    const email = normalizeEmail_(assignment.email);
+    const orgCode = normalizeOrgCode_(assignment.orgCode);
+    if (!email || !orgCode || !isStationCode_(orgCode)) return;
+    if (!nurseBaseByEmail.has(email)) {
+      nurseBaseByEmail.set(email, { name: assignment.name || email, codes: new Set(), names: new Set() });
+    }
+    const entry = nurseBaseByEmail.get(email);
+    entry.codes.add(orgCode);
+    entry.names.add(assignment.orgName || orgCode);
+  });
+
+  const needsDispatch = [];
+  nurseBaseByEmail.forEach((entry, email) => {
+    if (entry.codes.size > 1 && !resolvedEmails.has(email)) {
+      needsDispatch.push({
+        email,
+        name: entry.name || email,
+        baseStationCodes: Array.from(entry.codes),
+        baseStationNames: Array.from(entry.names)
+      });
+    }
+  });
+  needsDispatch.sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email), 'zh-Hant'));
+
+  return { asOfDate: dateString, stations, needsDispatch };
 }
 
 function saveWorkHourDispatch(payload) {
@@ -725,7 +845,8 @@ function deleteWorkHourDispatch(payload) {
   }
 }
 
-function createStation(payload) {
+// 新增行動駐站：臨時調派性質的全新獨立駐站。寫入資料試算表的「行動駐站」工作表（不再寫唯讀來源的組織架構樹／人員職務配置）。
+function createMobileStation(payload) {
   const viewerEmail = normalizeEmail_(getCurrentUserEmail());
   const lock = LockService.getScriptLock();
   let hasLock = false;
@@ -738,18 +859,17 @@ function createStation(payload) {
     acquireDispatchWriteLock_(lock);
     hasLock = true;
 
-    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const source = loadDispatchSource_({ forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
     assertCanCreateStation_(context);
     const effectiveSource = context.viewer.testMode ? applyTestStationOverrides_(source) : source;
-    const normalized = normalizeCreateStationPayload_(payload, effectiveSource);
+    const normalized = normalizeCreateMobileStationPayload_(payload, effectiveSource);
     if (context.viewer.testMode) {
       createTestStationRecord_(source, normalized);
     } else {
-      appendStationRecord_(source.orgSheet, normalized);
-      ensureStationManagerAssignment_(source.assignmentSheet, source.assignments, normalized);
+      appendMobileStationRecord_(getMobileStationSheet_(true), normalized, viewerEmail);
       invalidateDispatchSourceCache_();
     }
     lock.releaseLock();
@@ -758,22 +878,23 @@ function createStation(payload) {
     const response = getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
     response.createdStation = {
       code: normalized.code,
-      name: normalized.alias || normalized.name,
-      isExternal: normalized.isExternal
+      name: normalized.name,
+      isExternal: false
     };
     return response;
   } catch (error) {
-    console.error('新增駐站失敗:', error);
+    console.error('新增行動駐站失敗:', error);
     return {
       success: false,
-      message: error && error.message ? error.message : '無法新增駐站。'
+      message: error && error.message ? error.message : '無法新增行動駐站。'
     };
   } finally {
     if (hasLock) lock.releaseLock();
   }
 }
 
-function deleteStation(payload) {
+// 刪除行動駐站：以軟刪除（寫入刪除日期/人員，保留列）方式停用，前端入口已移除，保留供後端／管理使用。
+function deleteMobileStation(payload) {
   const viewerEmail = normalizeEmail_(getCurrentUserEmail());
   const lock = LockService.getScriptLock();
   let hasLock = false;
@@ -786,13 +907,13 @@ function deleteStation(payload) {
     acquireDispatchWriteLock_(lock);
     hasLock = true;
 
-    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const source = loadDispatchSource_({ forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
       testMode: Boolean(payload && payload.testMode)
     });
     const stationCode = normalizeOrgCode_(payload && payload.stationCode);
     if (!stationCode) {
-      throw new Error('請選擇要刪除的駐站。');
+      throw new Error('請選擇要刪除的行動駐站。');
     }
     const effectiveSource = context.viewer.testMode ? applyTestStationOverrides_(source) : source;
     assertCanAdministrateStation_(context, stationCode);
@@ -800,8 +921,7 @@ function deleteStation(payload) {
     if (context.viewer.testMode) {
       deleteTestStationRecord_(source, stationCode);
     } else {
-      deleteStationOrgRows_(source.orgSheet, stationCode);
-      deleteStationManagerAssignmentRows_(source.assignmentSheet, stationCode);
+      softDeleteMobileStationRecord_(getMobileStationSheet_(true), stationCode, viewerEmail);
       invalidateDispatchSourceCache_();
     }
     lock.releaseLock();
@@ -811,10 +931,10 @@ function deleteStation(payload) {
     response.deletedStationCode = stationCode;
     return response;
   } catch (error) {
-    console.error('刪除駐站失敗:', error);
+    console.error('刪除行動駐站失敗:', error);
     return {
       success: false,
-      message: error && error.message ? error.message : '無法刪除駐站。'
+      message: error && error.message ? error.message : '無法刪除行動駐站。'
     };
   } finally {
     if (hasLock) lock.releaseLock();
@@ -841,12 +961,14 @@ function loadDispatchSource_(options) {
   const orgStations = orgSheet ? readStationRecords_(orgSheet) : [];
   const mergedStations = mergeStationsWithAssignmentGroups_(orgStations, assignments);
   const stations = mergedStations.length ? mergedStations : deriveStationsFromAssignments_(assignments);
-  const source = {
+  let source = {
     personnel,
     personnelByEmail,
     assignments,
     stations
   };
+  // 併入資料試算表「行動駐站」（未軟刪除者）。讀取/寫入兩條路徑皆套用，且在綁定 sheet 物件與進快取之前。
+  source = applyMobileStationOverrides_(source);
 
   if (includeSheets) {
     source.orgSheet = orgSheet;
@@ -899,6 +1021,31 @@ function getDispatchSourceSpreadsheetId_() {
   }
 
   return spreadsheetId;
+}
+
+// 可寫資料試算表（行動駐站／駐站調配／年度調派紀錄與操作紀錄）。與唯讀來源平行，不共用同一試算表。
+function getDispatchDataSpreadsheet_() {
+  return SpreadsheetApp.openById(getDispatchDataSpreadsheetId_());
+}
+
+function getDispatchDataSpreadsheetId_() {
+  const dataSpreadsheetId = getEnvString_('DISPATCH_DATA_SHEET_ID', '');
+  if (!dataSpreadsheetId || dataSpreadsheetId.indexOf('請填入') >= 0) {
+    throw new Error('尚未設定駐站護理師調派資料 Spreadsheet ID，請於 GAS 指令碼屬性 (Script Properties) 設定 DISPATCH_DATA_SHEET_ID。');
+  }
+
+  const chrmSpreadsheetId = getEnvString_('CHRM_MASTER_SHEET_ID', getEnvString_('MASTER_SHEET_ID', ''));
+  if (chrmSpreadsheetId && dataSpreadsheetId === chrmSpreadsheetId) {
+    throw new Error('駐站護理師調派資料試算表不可指向 cHRM 正式資料表，請將 Script Properties 的 DISPATCH_DATA_SHEET_ID 改為獨立試算表 ID。');
+  }
+
+  // 各自取值再比對，避免來源未設定時遮蔽 DISPATCH_SOURCE_SHEET_ID 的原始設定錯誤訊息。
+  const sourceSpreadsheetId = getEnvString_('DISPATCH_SOURCE_SHEET_ID', '');
+  if (sourceSpreadsheetId && dataSpreadsheetId === sourceSpreadsheetId) {
+    throw new Error('資料試算表 (DISPATCH_DATA_SHEET_ID) 不可與唯讀來源 (DISPATCH_SOURCE_SHEET_ID) 相同，請建立獨立的資料試算表。');
+  }
+
+  return dataSpreadsheetId;
 }
 
 // 單次執行生命週期快取 Script Properties，避免 getEnvString_ 在大量讀表時反覆打 API（Issue #14）。
@@ -1974,6 +2121,164 @@ function normalizeStationCodeSuffix_(value, isExternal) {
   return suffix;
 }
 
+// ── 行動駐站 helpers ───────────────────────────────────────────────────────────
+
+function normalizeMobileStationCodeSuffix_(value) {
+  let suffix = String(value || '').trim().toUpperCase();
+  // 先剝較長的 protable 前綴，再剝一般前綴，避免使用者貼入完整代號時殘留。
+  suffix = suffix
+    .replace(new RegExp(`^${escapeRegExp_(APP_CONFIG.mobileStationCodePrefix.toUpperCase())}`), '')
+    .replace(new RegExp(`^${escapeRegExp_(APP_CONFIG.stationCodePrefix)}`), '');
+  if (!suffix) {
+    throw new Error('請輸入英文尾碼。');
+  }
+  if (!/^[A-Z0-9][A-Z0-9-]{0,23}$/.test(suffix)) {
+    throw new Error('英文尾碼只能使用大寫英文、數字與連字號，長度最多 24 碼。');
+  }
+  return suffix;
+}
+
+function normalizeCreateMobileStationPayload_(payload, source) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('新增行動駐站資料格式錯誤。');
+  }
+
+  const suffix = normalizeMobileStationCodeSuffix_(payload.codeSuffix);
+  const displayCode = `${APP_CONFIG.mobileStationCodePrefix}${suffix}`; // 工作表 A 欄：保留 protable 顯示
+  const code = normalizeOrgCode_(displayCode);                          // App 內比對一律大寫
+
+  if ((source.stations || []).some((station) => normalizeOrgCode_(station.code) === code)) {
+    throw new Error(`行動駐站代碼 ${code} 已存在。`);
+  }
+
+  const name = normalizeShortText_(payload.name, '駐站中文名稱', 80);
+  if (!name) {
+    throw new Error('請輸入駐站中文名稱。');
+  }
+  const managerEmail = normalizeEmail_(payload.managerEmail);
+  if (!managerEmail) {
+    throw new Error('請選擇駐站管理員。');
+  }
+  const candidates = buildStationManagerCandidates_(source);
+  const manager = candidates.find((person) => person.email === managerEmail);
+  if (!manager) {
+    throw new Error('找不到職稱為「駐站管理員」的人選，請先確認人員職務配置表。');
+  }
+
+  return {
+    code,
+    displayCode,
+    name,
+    alias: '',
+    managerEmail,
+    managerName: manager.name || manager.email,
+    isExternal: false,
+    isIsoCertified: false
+  };
+}
+
+// 讀「行動駐站」工作表 A-G，過濾已軟刪除（F 欄刪除日期非空）者。回傳 in-app 用的 station 雛形。
+function readMobileStationRecords_() {
+  const sheet = getMobileStationSheet_(false);
+  if (!sheet) return [];
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return [];
+  return values.slice(1)
+    .map((row) => {
+      const rawCode = String(row[0] || '').trim();
+      return {
+        code: normalizeOrgCode_(rawCode),
+        rawCode,
+        name: String(row[1] || '').trim(),
+        managerEmail: normalizeEmail_(row[2] || ''),
+        deletedAt: String(row[5] || '').trim()
+      };
+    })
+    .filter((station) => station.code && !station.deletedAt);
+}
+
+// 讀取時把未軟刪除的行動駐站併入 source.stations，並為每站補一筆管理員 assignment（沿用測試站手法）。
+function applyMobileStationOverrides_(source) {
+  if (!source || typeof source !== 'object') return source;
+  const mobileStations = readMobileStationRecords_();
+  if (!mobileStations.length) return source;
+
+  const stationByCode = new Map((Array.isArray(source.stations) ? source.stations : [])
+    .filter((station) => station && station.code)
+    .map((station) => [normalizeOrgCode_(station.code), { ...station }]));
+  const assignments = Array.isArray(source.assignments) ? source.assignments.slice() : [];
+
+  mobileStations.forEach((mobile) => {
+    const station = {
+      rowIndex: 0,
+      type: '行動駐站',
+      level: 0,
+      code: mobile.code,
+      name: mobile.name || mobile.rawCode,
+      alias: '',
+      parentCode: '',
+      managerEmail: mobile.managerEmail,
+      managerName: resolveDisplayNameByEmail_(source, mobile.managerEmail) || mobile.managerEmail,
+      isIsoCertified: false,
+      isExternal: false,
+      isMobile: true
+    };
+    stationByCode.set(mobile.code, station);
+    assignments.push(createTestStationManagerAssignment_(station));
+  });
+
+  return {
+    ...source,
+    assignments,
+    stations: Array.from(stationByCode.values())
+  };
+}
+
+function resolveDisplayNameByEmail_(source, email) {
+  const normalized = normalizeEmail_(email);
+  if (!normalized) return '';
+  const person = source && source.personnelByEmail && typeof source.personnelByEmail.get === 'function'
+    ? source.personnelByEmail.get(normalized)
+    : null;
+  if (person && person.name) return person.name;
+  const assignment = (Array.isArray(source && source.assignments) ? source.assignments : [])
+    .find((item) => item && normalizeEmail_(item.email) === normalized && item.name);
+  return assignment ? assignment.name : '';
+}
+
+function appendMobileStationRecord_(sheet, station, viewerEmail) {
+  if (!sheet) {
+    throw new Error('找不到行動駐站工作表，無法新增行動駐站。');
+  }
+  const row = new Array(MOBILE_STATION_SHEET_HEADERS_.length).fill('');
+  row[0] = station.displayCode || station.code; // A 行動駐站代號
+  row[1] = station.name;                         // B 駐站中文名稱
+  row[2] = station.managerEmail;                 // C 駐站管理員email
+  row[3] = getTodayDateString_();               // D 新增日期
+  row[4] = normalizeEmail_(viewerEmail);        // E 新增人員
+  // F 刪除日期 / G 刪除人員：留空，軟刪除時才填。
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+  SpreadsheetApp.flush();
+}
+
+function softDeleteMobileStationRecord_(sheet, stationCode, viewerEmail) {
+  if (!sheet) {
+    throw new Error('找不到行動駐站工作表，無法刪除行動駐站。');
+  }
+  const normalizedCode = normalizeOrgCode_(stationCode);
+  const values = sheet.getDataRange().getDisplayValues();
+  for (let i = 1; i < values.length; i++) {
+    if (normalizeOrgCode_(values[i][0]) !== normalizedCode) continue;
+    if (String(values[i][5] || '').trim()) {
+      throw new Error('此行動駐站已被刪除。');
+    }
+    sheet.getRange(i + 1, 6, 1, 2).setValues([[getTodayDateString_(), normalizeEmail_(viewerEmail)]]); // F/G
+    SpreadsheetApp.flush();
+    return;
+  }
+  throw new Error('找不到對應的行動駐站，無法刪除（僅行動駐站可由此刪除）。');
+}
+
 function appendStationRecord_(sheet, station) {
   const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0];
   const columnCount = Math.max(sheet.getLastColumn(), 9);
@@ -2567,6 +2872,31 @@ function isTemporaryDispatchRecord_(record) {
   return Boolean(originalCode && stationCode && originalCode !== stationCode);
 }
 
+// 每位人員（email）在人員職務配置中的「基底駐站集合」。一人多列即對應多個基底站。
+function buildBaseStationsByEmail_(assignments) {
+  const map = new Map();
+  (Array.isArray(assignments) ? assignments : []).forEach((assignment) => {
+    if (!assignment) return;
+    const email = normalizeEmail_(assignment.email);
+    const orgCode = normalizeOrgCode_(assignment.orgCode);
+    if (!email || !orgCode || !isStationCode_(orgCode)) return;
+    if (!map.has(email)) map.set(email, new Set());
+    map.get(email).add(orgCode);
+  });
+  return map;
+}
+
+// 是否計入每月調派計次：必須是跨站臨調，且「目標站」不在該人員的基底駐站集合內。
+// 在自己基底站之間互調（目標仍是其基底站）→ 不計次。
+function isCountableDispatchRecord_(record, baseStationsByEmail) {
+  if (!isTemporaryDispatchRecord_(record)) return false;
+  const email = normalizeEmail_(record && record.nurseEmail);
+  const targetCode = normalizeOrgCode_(record && record.stationCode);
+  const bases = baseStationsByEmail && baseStationsByEmail.get ? baseStationsByEmail.get(email) : null;
+  if (bases && bases.has(targetCode)) return false;
+  return true;
+}
+
 function isPendingAssignmentRecord_(record) {
   return normalizeAssignmentStatus_(record && record.assignmentStatus) === APP_CONFIG.pendingAssignmentStatus;
 }
@@ -2711,35 +3041,70 @@ function buildLegacyDispatchRecordVersion_(record) {
   ].map((value) => String(value || '').trim()).join('|');
 }
 
+// 將每位被影響人員的臨調摘要 upsert 到資料試算表「駐站調配」工作表（資料ID = assignmentKey）。
+// 取代原本寫回唯讀來源「人員職務配置」的「臨時調配」欄；DISPATCH_SOURCE_SHEET_ID 自此維持唯讀。
 function syncTemporaryDispatchColumn_(source, records, assignmentKeys, options) {
   // 預設為同步（true），僅當明確設為 false 時跳過；支援 Script Properties 與 env.js 兩種來源（Issue #14）。
   if (!getEnvBoolean_('SYNC_TEMPORARY_DISPATCH_COLUMN', true)) return;
   if (isTestDispatchRecordStore_(options)) return;
-  if (!source || !source.assignmentSheet) return;
 
   const keys = Array.from(new Set((assignmentKeys || [])
     .map((key) => String(key || '').trim())
     .filter(Boolean)));
   if (!keys.length) return;
 
-  const sheet = source.assignmentSheet;
-  const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getDisplayValues()[0];
-  const temporaryDispatchIndex = findHeaderIndex_(headers, FIELD_ALIASES.temporaryDispatch);
-  if (temporaryDispatchIndex < 0) {
-    throw new Error('找不到「臨時調配」欄，無法同步標註。');
+  const assignmentsByKey = new Map((source && source.assignments || []).map((assignment) => [assignment.assignmentKey, assignment]));
+  const entries = keys.map((assignmentKey) => {
+    const assignment = assignmentsByKey.get(assignmentKey) || {};
+    return {
+      assignmentKey,
+      email: assignment.email,
+      name: assignment.name,
+      orgCode: assignment.orgCode,
+      summary: buildTemporaryDispatchCellValue_(records, assignmentKey, source)
+    };
+  });
+  upsertStationAllocationRows_(entries);
+}
+
+// 將臨調摘要 upsert 進「駐站調配」工作表（資料ID = assignmentKey）。syncTemporaryDispatchColumn_ 與遷移共用。
+function upsertStationAllocationRows_(entries) {
+  const list = (Array.isArray(entries) ? entries : []).filter((entry) => entry && entry.assignmentKey);
+  if (!list.length) return 0;
+
+  const sheet = getStationAllocationSheet_(true);
+  if (!sheet) return 0;
+
+  // 建 資料ID(assignmentKey) → rowIndex（1-based，含表頭）。
+  const lastRow = sheet.getLastRow();
+  const idToRow = new Map();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues().forEach((cells, i) => {
+      const id = String(cells[0] || '').trim();
+      if (id) idToRow.set(id, i + 2);
+    });
   }
 
-  const assignmentsByKey = new Map((source.assignments || []).map((assignment) => [assignment.assignmentKey, assignment]));
-  let didWrite = false;
-  keys.forEach((assignmentKey) => {
-    const assignment = assignmentsByKey.get(assignmentKey);
-    if (!assignment || !assignment.rowIndex) return;
-
-    const value = buildTemporaryDispatchCellValue_(records, assignmentKey, source);
-    sheet.getRange(Number(assignment.rowIndex), temporaryDispatchIndex + 1).setValue(value);
-    didWrite = true;
+  const updatedAt = formatTimestamp_(new Date());
+  let count = 0;
+  list.forEach((entry) => {
+    const [keyEmail, keyOrgCode] = String(entry.assignmentKey).split('::');
+    const rowValues = [
+      entry.assignmentKey,                              // 資料ID
+      entry.email || normalizeEmail_(keyEmail),         // 信箱
+      entry.name || '',                                 // 姓名
+      entry.orgCode || normalizeOrgCode_(keyOrgCode),   // 基底駐站代號
+      String(entry.summary || ''),                      // 臨調摘要（空字串代表目前無臨調）
+      updatedAt                                          // 更新時間
+    ];
+    const targetRow = idToRow.get(entry.assignmentKey) || (sheet.getLastRow() + 1);
+    sheet.getRange(targetRow, 1, 1, rowValues.length).setValues([rowValues]);
+    if (!idToRow.has(entry.assignmentKey)) idToRow.set(entry.assignmentKey, targetRow);
+    count++;
   });
-  if (didWrite) invalidateDispatchSourceCache_();
+
+  SpreadsheetApp.flush();
+  return count;
 }
 
 function buildTemporaryDispatchCellValue_(records, assignmentKey, source) {
@@ -2897,6 +3262,84 @@ function migrateLegacyDispatchAuditLogsToAnnualSheets_(store) {
   clearScriptJsonStore_(store.auditLogStoreKey);
 }
 
+// 一次性遷移：把舊「來源試算表」中的年度調派紀錄／操作紀錄與「臨時調配」欄，搬到新「資料試算表」。
+// 可重複執行（by id / by assignmentKey 去重，冪等）；不刪除來源舊資料（保留作備份）。請於 GAS 編輯器手動執行。
+function migrateDispatchDataToDataSpreadsheet() {
+  const summary = { migratedRecords: 0, migratedAuditLogs: 0, migratedAllocations: 0, notes: [] };
+
+  // 先驗證兩個試算表 ID 設定正確（任一錯設會 throw，避免誤搬）。
+  getDispatchSourceSpreadsheetId_();
+  getDispatchDataSpreadsheetId_();
+
+  // 1) 年度調派紀錄（正式 + 測試前綴）：自舊來源讀出 → 寫入資料試算表（by id 去重）。
+  [
+    { prefix: APP_CONFIG.recordSheetPrefix, store: getDispatchRecordStoreKeys_({ testMode: false }) },
+    { prefix: APP_CONFIG.testRecordSheetPrefix, store: getDispatchRecordStoreKeys_({ testMode: true }) }
+  ].forEach((entry) => {
+    const legacy = readLegacyAnnualJsonFromSource_(entry.prefix, normalizeStoredDispatchRecord_)
+      .filter(isActiveStoredDispatchRecord_);
+    if (!legacy.length) return;
+    writeAnnualDispatchRecords_(legacy.concat(readAnnualDispatchRecords_(entry.store)), entry.store);
+    summary.migratedRecords += legacy.length;
+    summary.notes.push(`${entry.prefix}*：讀入 ${legacy.length} 筆`);
+  });
+
+  // 2) 年度調派操作紀錄（正式 + 測試前綴）。
+  [
+    { prefix: APP_CONFIG.auditLogSheetPrefix, store: getDispatchRecordStoreKeys_({ testMode: false }) },
+    { prefix: APP_CONFIG.testAuditLogSheetPrefix, store: getDispatchRecordStoreKeys_({ testMode: true }) }
+  ].forEach((entry) => {
+    const legacy = readLegacyAnnualJsonFromSource_(entry.prefix, normalizeDispatchAuditLog_);
+    if (!legacy.length) return;
+    writeAnnualDispatchAuditLogs_(legacy.concat(readAnnualDispatchAuditLogs_(entry.store)), entry.store);
+    summary.migratedAuditLogs += legacy.length;
+    summary.notes.push(`${entry.prefix}*：讀入 ${legacy.length} 筆`);
+  });
+
+  // 3) 臨時調配欄 → 駐站調配（by assignmentKey upsert）。loadDispatchSource_ 仍會從唯讀來源讀到舊欄位值。
+  const source = loadDispatchSource_({ forceFresh: true });
+  const allocationEntries = (Array.isArray(source.assignments) ? source.assignments : [])
+    .filter((assignment) => assignment && assignment.assignmentKey && String(assignment.temporaryDispatch || '').trim())
+    .map((assignment) => ({
+      assignmentKey: assignment.assignmentKey,
+      email: assignment.email,
+      name: assignment.name,
+      orgCode: assignment.orgCode,
+      summary: String(assignment.temporaryDispatch || '').trim()
+    }));
+  summary.migratedAllocations = upsertStationAllocationRows_(allocationEntries);
+
+  // 4) 清快取，確保之後讀的是資料試算表的新資料。
+  invalidateDispatchRecordsCache_();
+  invalidateDispatchSourceCache_();
+
+  console.log('行動駐站資料遷移完成：', JSON.stringify(summary));
+  return summary;
+}
+
+// 直接從「來源試算表」掃出符合年度前綴的舊年度表 raw rows（遷移專用；getter 已切換至資料試算表，故需直讀來源）。
+function readLegacyAnnualJsonFromSource_(sheetPrefix, normalizeFn) {
+  const spreadsheet = getDispatchSourceSpreadsheet_();
+  const pattern = new RegExp(`^${escapeRegExp_(sheetPrefix)}(\\d{4})$`);
+  const items = [];
+  spreadsheet.getSheets().forEach((sheet) => {
+    if (!pattern.test(String(sheet.getName() || ''))) return;
+    if (sheet.getLastRow() < 2) return;
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, DISPATCH_ANNUAL_STORE_HEADERS_.length).getValues();
+    values.forEach((row) => {
+      const raw = String(row[2] || '').trim();
+      if (!raw) return;
+      try {
+        const normalized = normalizeFn(JSON.parse(raw));
+        if (normalized) items.push(normalized);
+      } catch (error) {
+        console.error(`遷移解析年度資料失敗：${sheet.getName()}`, error);
+      }
+    });
+  });
+  return items;
+}
+
 function readAnnualDispatchRecords_(store) {
   const records = [];
   getAnnualJsonStoreYears_(store.recordSheetPrefix).forEach((year) => {
@@ -3016,7 +3459,7 @@ function writeAnnualJsonStore_(sheetPrefix, year, items, normalizeFn, compareFn,
 }
 
 function getAnnualJsonStoreYears_(sheetPrefix) {
-  const spreadsheet = getDispatchSourceSpreadsheet_();
+  const spreadsheet = getDispatchDataSpreadsheet_();
   const pattern = new RegExp(`^${escapeRegExp_(sheetPrefix)}(\\d{4})$`);
   return spreadsheet.getSheets()
     .map((sheet) => {
@@ -3030,7 +3473,7 @@ function getAnnualJsonStoreYears_(sheetPrefix) {
 function getAnnualJsonStoreSheet_(sheetPrefix, year, createIfMissing) {
   const normalizedYear = normalizeAnnualStoreYear_(year);
   const sheetName = `${sheetPrefix}${normalizedYear}`;
-  const spreadsheet = getDispatchSourceSpreadsheet_();
+  const spreadsheet = getDispatchDataSpreadsheet_();
   let sheet = getSheetByNameOrNull_(spreadsheet, sheetName);
   if (!sheet && createIfMissing) {
     sheet = spreadsheet.insertSheet(sheetName);
@@ -3067,6 +3510,41 @@ function ensureSheetCapacity_(sheet, minRows, minColumns) {
   if (sheet.getMaxColumns() < targetColumns) {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), targetColumns - sheet.getMaxColumns());
   }
+}
+
+// 確保資料試算表內某工作表存在並具備指定表頭（凍結首列）。供行動駐站／駐站調配共用。
+function ensureDataSheetWithHeaders_(sheetName, headers, createIfMissing) {
+  const spreadsheet = getDispatchDataSpreadsheet_();
+  let sheet = getSheetByNameOrNull_(spreadsheet, sheetName);
+  if (!sheet) {
+    if (!createIfMissing) return null;
+    sheet = spreadsheet.insertSheet(sheetName);
+  }
+  ensureSheetCapacity_(sheet, 1, headers.length);
+  const currentHeaders = sheet.getRange(1, 1, 1, headers.length).getDisplayValues()[0]
+    .map((header) => String(header || '').trim());
+  const needsHeader = headers.some((header, index) => currentHeaders[index] !== header);
+  if (needsHeader) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function getMobileStationSheet_(createIfMissing) {
+  return ensureDataSheetWithHeaders_(
+    getEnvString_('DISPATCH_MOBILE_STATION_SHEET_NAME', APP_CONFIG.mobileStationSheetName),
+    MOBILE_STATION_SHEET_HEADERS_,
+    createIfMissing
+  );
+}
+
+function getStationAllocationSheet_(createIfMissing) {
+  return ensureDataSheetWithHeaders_(
+    getEnvString_('DISPATCH_STATION_ALLOCATION_SHEET_NAME', APP_CONFIG.stationAllocationSheetName),
+    STATION_ALLOCATION_SHEET_HEADERS_,
+    createIfMissing
+  );
 }
 
 function getAnnualJsonItemId_(item) {

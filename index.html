@@ -1775,8 +1775,7 @@
               <label for="station-picker-button">調派駐站</label>
               <div class="station-select-stack">
                 <div class="station-field-actions">
-                  <button class="btn btn-ghost hidden" type="button" id="add-station-btn">新增駐站</button>
-                  <button class="btn btn-danger hidden" type="button" id="delete-station-btn">刪除駐站</button>
+                  <button class="btn btn-ghost hidden" type="button" id="add-mobile-station-btn">新增行動駐站</button>
                 </div>
                 <select id="station-select" class="station-select-native" required tabindex="-1" aria-hidden="true"></select>
                 <div class="station-picker" id="station-picker">
@@ -1863,6 +1862,66 @@
                   <table class="schedule-matrix" id="schedule-table">
                     <thead id="schedule-head"></thead>
                     <tbody id="schedule-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">駐站真實人數（依日期）</div>
+              <div class="muted">以選定日期解析各駐站真實人數（基底 − 當日調出 + 當日調入），並標示需要被調派的人員。</div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="records-query" id="headcount-toolbar">
+              <div class="field">
+                <label for="headcount-date">查詢日期</label>
+                <input id="headcount-date" type="date">
+              </div>
+              <div class="records-actions">
+                <button class="btn btn-primary" type="button" id="headcount-load-btn">查詢真實人數</button>
+              </div>
+            </div>
+            <div class="status" id="headcount-status"></div>
+            <div class="fairness-grid">
+              <div class="fairness-table-card">
+                <div class="fairness-table-header">
+                  <div class="fairness-table-title">各駐站真實人數</div>
+                  <div class="muted" id="headcount-station-count">0 筆</div>
+                </div>
+                <div class="fairness-table-wrap">
+                  <table class="fairness-station-table">
+                    <thead>
+                      <tr>
+                        <th>駐站</th>
+                        <th>基底</th>
+                        <th>調入</th>
+                        <th>調出</th>
+                        <th>真實人數</th>
+                      </tr>
+                    </thead>
+                    <tbody id="headcount-station-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="fairness-table-card">
+                <div class="fairness-table-header">
+                  <div class="fairness-table-title">需要被調派</div>
+                  <div class="muted" id="needs-dispatch-count">0 筆</div>
+                </div>
+                <div class="fairness-table-wrap">
+                  <table class="fairness-nurse-table">
+                    <thead>
+                      <tr>
+                        <th>護理師</th>
+                        <th>基底駐站</th>
+                      </tr>
+                    </thead>
+                    <tbody id="needs-dispatch-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1977,32 +2036,21 @@
       <section class="station-modal">
         <div class="modal-header">
           <div>
-            <div class="panel-title" id="station-modal-title">新增駐站</div>
-            <div class="muted" id="station-modal-description">建立駐站節點，並從職稱為駐站管理員的人選中指定管理員。</div>
+            <div class="panel-title" id="station-modal-title">新增行動駐站</div>
+            <div class="muted" id="station-modal-description">建立臨時行動駐站，並從職稱為駐站管理員的人選中指定管理員。</div>
           </div>
           <button class="btn btn-ghost" type="button" id="station-modal-close">關閉</button>
         </div>
         <form id="station-form">
           <div class="station-form">
             <div class="field">
-              <label>駐站類型</label>
-              <div class="station-type-toggle">
-                <button class="btn station-type-btn is-active" type="button" data-station-type="general">一般駐站</button>
-                <button class="btn station-type-btn" type="button" data-station-type="external">委外駐站</button>
-              </div>
-            </div>
-            <div class="field">
               <label for="station-code-suffix">英文尾碼</label>
               <input id="station-code-suffix" type="text" maxlength="24" placeholder="例如 ABC" autocomplete="off" required>
-              <div class="code-preview" id="station-code-preview">完整代碼：GRP-CO-</div>
+              <div class="code-preview" id="station-code-preview">完整代碼：GRP-CO-protable-</div>
             </div>
             <div class="field">
               <label for="station-name">駐站中文名稱</label>
               <input id="station-name" type="text" maxlength="80" placeholder="請輸入駐站名稱" required>
-            </div>
-            <div class="field">
-              <label for="station-alias">駐站別名</label>
-              <input id="station-alias" type="text" maxlength="40" placeholder="選填">
             </div>
             <div class="field">
               <label for="station-manager">駐站管理員</label>
@@ -2013,7 +2061,7 @@
           </div>
           <div class="modal-footer">
             <div class="muted">名單來源：人員職務配置中職稱為「駐站管理員」者。</div>
-            <button class="btn btn-primary" type="submit" id="station-save-btn">新增駐站</button>
+            <button class="btn btn-primary" type="submit" id="station-save-btn">新增行動駐站</button>
           </div>
         </form>
       </section>
@@ -2120,6 +2168,7 @@
     const RESPONSIVE_DAY_MAX_COUNT = 7;
     const STATION_CODE_PREFIX = 'GRP-CO-';
     const EXTERNAL_STATION_CODE_PREFIX = 'GRP-CO-EX-';
+    const MOBILE_STATION_CODE_PREFIX = 'GRP-CO-protable-';
     const RECORDS_AUTO_REFRESH_MS = 45000;
     const STATION_COLOR_CLASS_COUNT = 22;
     const MOVEMENT_TASK_TONE_COUNT = 8;
@@ -2178,8 +2227,7 @@
         'viewer-name',
         'viewer-email',
         'login-notice',
-        'add-station-btn',
-        'delete-station-btn',
+        'add-mobile-station-btn',
         'test-mode-btn',
         'toolbar',
         'loading',
@@ -2193,6 +2241,13 @@
         'filter-station',
         'filter-nurse',
         'record-count-display',
+        'headcount-date',
+        'headcount-load-btn',
+        'headcount-status',
+        'headcount-station-count',
+        'headcount-station-body',
+        'needs-dispatch-count',
+        'needs-dispatch-body',
         'fairness-year',
         'fairness-range',
         'fairness-station',
@@ -2264,7 +2319,6 @@
         'station-code-suffix',
         'station-code-preview',
         'station-name',
-        'station-alias',
         'station-manager',
         'station-manager-options',
         'station-status',
@@ -2283,11 +2337,12 @@
     }
 
     function bindEvents() {
-      el.addStationBtn.addEventListener('click', openStationModal);
-      el.deleteStationBtn.addEventListener('click', deleteSelectedStation);
+      el.addMobileStationBtn.addEventListener('click', openStationModal);
       el.reloadBtn.addEventListener('click', () => loadData(collectFilters()));
       el.exportRecordsBtn.addEventListener('click', exportRecordsToExcel);
       el.fairnessLoadBtn.addEventListener('click', () => loadFairnessStats({ reason: 'manual' }));
+      if (el.headcountLoadBtn) el.headcountLoadBtn.addEventListener('click', () => loadStationHeadcount());
+      if (el.headcountDate) el.headcountDate.addEventListener('change', () => loadStationHeadcount());
       el.fairnessYear.addEventListener('input', () => {
         const rawYear = Number(el.fairnessYear.value);
         if (!Number.isInteger(rawYear) || rawYear < 2020 || rawYear > 2100) return;
@@ -2412,9 +2467,6 @@
         if (event.target === el.pendingAssignmentModal) closePendingAssignmentModal();
       });
       el.pendingAssignmentSaveBtn.addEventListener('click', assignPendingRecord);
-      document.querySelectorAll('[data-station-type]').forEach((button) => {
-        button.addEventListener('click', () => setStationModalType(button.getAttribute('data-station-type')));
-      });
       el.stationCodeSuffix.addEventListener('input', updateStationCodePreview);
       el.stationForm.addEventListener('submit', saveStation);
       window.addEventListener('focus', () => refreshRecordsNow('focus'));
@@ -2555,6 +2607,12 @@
           silent: Boolean(settings.silent),
           reason: syncReason
         }), 0);
+      }
+      if (el.headcountDate && !el.headcountDate.value) {
+        el.headcountDate.value = getTodayString();
+      }
+      if (shouldLoadFairness) {
+        window.setTimeout(() => loadStationHeadcount(), 0);
       }
     }
 
@@ -2845,20 +2903,13 @@
 
     function renderStationCreateControl() {
       const canCreate = Boolean(state.viewer && state.viewer.canCreateStation);
-      el.addStationBtn.classList.toggle('hidden', !canCreate);
-      el.deleteStationBtn.classList.toggle('hidden', !canCreate);
+      el.addMobileStationBtn.classList.toggle('hidden', !canCreate);
       updateStationActionButtons();
     }
 
     function updateStationActionButtons() {
       const canManageStations = Boolean(state.viewer && state.viewer.canCreateStation);
-      const hasSelectedStation = Boolean(el.stationSelect.value);
-      const canDeleteSelectedStation = canAdministrateStation(el.stationSelect.value);
-      el.addStationBtn.disabled = !canManageStations || state.isCreatingStation;
-      el.deleteStationBtn.disabled = !canManageStations || !hasSelectedStation || !canDeleteSelectedStation || state.isDeletingStation;
-      el.deleteStationBtn.title = hasSelectedStation && !canDeleteSelectedStation
-        ? '共享調度可使用此目標駐站；刪除駐站資料仍限原管理者。'
-        : '';
+      el.addMobileStationBtn.disabled = !canManageStations || state.isCreatingStation;
     }
 
     function canAdministrateStation(stationCode) {
@@ -3443,40 +3494,23 @@
     }
 
     function resetStationForm() {
-      state.stationModalType = 'general';
       el.stationForm.reset();
       renderStationManagerOptions();
-      setStationModalType('general');
+      updateStationCodePreview();
       setStationStatus('');
     }
 
-    function setStationModalType(type) {
-      state.stationModalType = type === 'external' ? 'external' : 'general';
-      document.querySelectorAll('[data-station-type]').forEach((button) => {
-        button.classList.toggle('is-active', button.getAttribute('data-station-type') === state.stationModalType);
-      });
-      el.stationModalDescription.textContent = state.stationModalType === 'external'
-        ? '建立委外駐站；管理員限職稱為駐站管理員的人選。'
-        : '建立一般駐站；管理員限職稱為駐站管理員的人選。';
-      updateStationCodePreview();
-    }
-
     function updateStationCodePreview() {
-      const prefix = state.stationModalType === 'external'
-        ? EXTERNAL_STATION_CODE_PREFIX
-        : STATION_CODE_PREFIX;
-      const suffix = normalizeStationSuffixInput(el.stationCodeSuffix.value, state.stationModalType === 'external');
-      el.stationCodePreview.textContent = `完整代碼：${prefix}${suffix}`;
+      const suffix = normalizeMobileStationSuffixInput(el.stationCodeSuffix.value);
+      el.stationCodePreview.textContent = `完整代碼：${MOBILE_STATION_CODE_PREFIX}${suffix}`;
     }
 
-    function normalizeStationSuffixInput(value, isExternal) {
-      let suffix = String(value || '')
+    function normalizeMobileStationSuffixInput(value) {
+      return String(value || '')
         .trim()
         .toUpperCase()
-        .replace(new RegExp(`^${escapeRegExp(EXTERNAL_STATION_CODE_PREFIX)}`), '')
+        .replace(new RegExp(`^${escapeRegExp(MOBILE_STATION_CODE_PREFIX.toUpperCase())}`), '')
         .replace(new RegExp(`^${escapeRegExp(STATION_CODE_PREFIX)}`), '');
-      if (isExternal && suffix.indexOf('EX-') === 0) suffix = suffix.slice(3);
-      return suffix;
     }
 
     async function saveStation(event) {
@@ -3491,12 +3525,9 @@
       }
 
       const payload = {
-        stationType: state.stationModalType,
-        codeSuffix: normalizeStationSuffixInput(el.stationCodeSuffix.value, state.stationModalType === 'external'),
+        codeSuffix: normalizeMobileStationSuffixInput(el.stationCodeSuffix.value),
         name: el.stationName.value,
-        alias: el.stationAlias.value,
         managerEmail,
-        isIsoCertified: false,
         testMode: state.testMode,
         filters: collectFilters()
       };
@@ -3504,12 +3535,12 @@
       state.isCreatingStation = true;
       setButtonBusy(el.stationSaveBtn, true, '新增中');
       setStationStatus('新增中...');
-      showBusy('正在新增駐站...', state.testMode ? '測試模式會新增到測試駐站清單，不會寫入正式試算表。' : '系統正在寫入正式駐站資料。');
+      showBusy('正在新增行動駐站...', state.testMode ? '測試模式會新增到測試駐站清單，不會寫入正式試算表。' : '系統正在寫入行動駐站資料。');
 
       try {
-        const response = await callServer('createStation', payload);
+        const response = await callServer('createMobileStation', payload);
         if (!response || !response.success) {
-          throw new Error(response && response.message ? response.message : '新增駐站失敗。');
+          throw new Error(response && response.message ? response.message : '新增行動駐站失敗。');
         }
         applyData(response);
         if (response.createdStation && response.createdStation.code) {
@@ -3520,56 +3551,12 @@
           updateDispatchRuleNote();
         }
         closeStationModal(true);
-        setStatus(`${response.createdStation && response.createdStation.name || '駐站'} 已新增。`, 'success');
+        setStatus(`${response.createdStation && response.createdStation.name || '行動駐站'} 已新增。`, 'success');
       } catch (error) {
-        setStationStatus(error && error.message ? error.message : '新增駐站失敗。', 'error');
+        setStationStatus(error && error.message ? error.message : '新增行動駐站失敗。', 'error');
       } finally {
         state.isCreatingStation = false;
-        setButtonBusy(el.stationSaveBtn, false, '新增駐站');
-        hideBusy();
-      }
-    }
-
-    async function deleteSelectedStation() {
-      if (state.isDeletingStation) return;
-      const station = getStationByCode(el.stationSelect.value);
-      if (!station) {
-        setStatus('請先選擇要刪除的駐站。', 'error');
-        return;
-      }
-      if (!canAdministrateStation(station.code)) {
-        setStatus('共享調度可使用此目標駐站；刪除駐站資料仍限原管理者。', 'error');
-        return;
-      }
-
-      const confirmed = window.confirm([
-        `確定刪除「${getStationDisplayName(station)}」？`,
-        '若此駐站已有有效調派紀錄或仍有人員配置，系統會停止刪除。'
-      ].join('\n'));
-      if (!confirmed) return;
-
-      state.isDeletingStation = true;
-      updateStationActionButtons();
-      setStatus('刪除駐站中...');
-      showBusy('正在刪除駐站...', state.testMode ? '測試模式只會調整測試駐站視圖，不會刪除正式試算表資料。' : '系統會確認無有效調派與人員配置後才刪除。');
-
-      try {
-        const response = await callServer('deleteStation', {
-          stationCode: station.code,
-          testMode: state.testMode,
-          filters: collectFilters()
-        });
-        if (!response || !response.success) {
-          throw new Error(response && response.message ? response.message : '刪除駐站失敗。');
-        }
-        applyData(response);
-        resetForm();
-        setStatus(`${getStationDisplayName(station)} 已刪除。`, 'success');
-      } catch (error) {
-        setStatus(error && error.message ? error.message : '刪除駐站失敗。', 'error');
-      } finally {
-        state.isDeletingStation = false;
-        updateStationActionButtons();
+        setButtonBusy(el.stationSaveBtn, false, '新增行動駐站');
         hideBusy();
       }
     }
@@ -3818,6 +3805,72 @@
           setFairnessLoading(false);
           if (!settings.silent) hideBusy();
         }
+      }
+    }
+
+    function setHeadcountStatus(message, type) {
+      if (!el.headcountStatus) return;
+      el.headcountStatus.textContent = message || '';
+      el.headcountStatus.className = `status${type ? ` ${type}` : ''}`;
+    }
+
+    async function loadStationHeadcount() {
+      if (!state.viewer) return false;
+      if (el.headcountDate && !el.headcountDate.value) {
+        el.headcountDate.value = getTodayString();
+      }
+      const asOfDate = (el.headcountDate && el.headcountDate.value) || getTodayString();
+      setHeadcountStatus('查詢中...');
+      try {
+        const response = await callServer('getStationHeadcountByDate', {
+          asOfDate,
+          testMode: state.testMode
+        });
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '駐站真實人數讀取失敗。');
+        }
+        renderStationHeadcount(response);
+        setHeadcountStatus(`已更新（${response.asOfDate || asOfDate}）`, 'success');
+        return true;
+      } catch (error) {
+        renderStationHeadcount({ stations: [], needsDispatch: [] });
+        setHeadcountStatus(error && error.message ? error.message : '駐站真實人數讀取失敗。', 'error');
+        return false;
+      }
+    }
+
+    function renderStationHeadcount(response) {
+      const stations = Array.isArray(response && response.stations) ? response.stations : [];
+      const needsDispatch = Array.isArray(response && response.needsDispatch) ? response.needsDispatch : [];
+
+      if (el.headcountStationCount) el.headcountStationCount.textContent = `${formatNumber(stations.length)} 筆`;
+      if (el.headcountStationBody) {
+        el.headcountStationBody.innerHTML = stations.length
+          ? stations.map((station) => `
+            <tr>
+              <td>${escapeHtml(station.name || station.code || '')}</td>
+              <td>${formatNumber(station.baseCount)}</td>
+              <td>${formatNumber(station.incoming)}</td>
+              <td>${formatNumber(station.outgoing)}</td>
+              <td><strong>${formatNumber(station.realCount)}</strong></td>
+            </tr>`).join('')
+          : '<tr><td colspan="5" class="muted">查無駐站資料。</td></tr>';
+      }
+
+      if (el.needsDispatchCount) el.needsDispatchCount.textContent = `${formatNumber(needsDispatch.length)} 筆`;
+      if (el.needsDispatchBody) {
+        el.needsDispatchBody.innerHTML = needsDispatch.length
+          ? needsDispatch.map((nurse) => {
+              const names = Array.isArray(nurse.baseStationNames) && nurse.baseStationNames.length
+                ? nurse.baseStationNames
+                : (Array.isArray(nurse.baseStationCodes) ? nurse.baseStationCodes : []);
+              return `
+            <tr>
+              <td>${escapeHtml(nurse.name || nurse.email || '')}</td>
+              <td>${escapeHtml(names.join('、'))}</td>
+            </tr>`;
+            }).join('')
+          : '<tr><td colspan="2" class="muted">目前無待調派人員。</td></tr>';
       }
     }
 
