@@ -1,5 +1,6 @@
 **
 !appsscript.json
 !code.js
+!deploy.js
 !env.js
 !index.html

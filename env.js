@@ -3,9 +3,15 @@ const ENV = {
   // 真實值須填入 GAS「專案設定 > 指令碼屬性」的 CHRM_MASTER_SHEET_ID；
   // 留空字串會讓防呆 guard 失效，故部署時務必於 Script Properties 設定。
   CHRM_MASTER_SHEET_ID: "",
-  // 【機敏，請改設於 Script Properties】駐站護理師工時調派 App 的獨立資料來源。
+  // 【機敏，請改設於 Script Properties】駐站護理師工時調派 App 的獨立資料來源（唯讀）。
   // 真實值須填入 GAS「專案設定 > 指令碼屬性」的 DISPATCH_SOURCE_SHEET_ID，不可填 cHRM 正式資料表 ID。
+  // 僅作唯讀來源：人員主檔、人員職務配置、組織架構樹。App 不再寫入此試算表。
   DISPATCH_SOURCE_SHEET_ID: "",
+  // 【機敏，請改設於 Script Properties】駐站調派 App 的「可寫資料」試算表 ID。
+  // 真實值須填入 Script Properties 的 DISPATCH_DATA_SHEET_ID。
+  // 存放可寫資料：行動駐站、駐站調配、調派紀錄_YYYY、調派操作紀錄_YYYY。
+  // 不可等於 DISPATCH_SOURCE_SHEET_ID（唯讀來源），亦不可等於 CHRM_MASTER_SHEET_ID。
+  DISPATCH_DATA_SHEET_ID: "",
   // 獨立資料來源中的人員主檔分頁。用於讀取狀態並排除育嬰、留停等不可調配人力。
   DISPATCH_PERSONNEL_SHEET_GID: 198337618,
   // 獨立資料來源中的人員職務配置分頁。優先用 gid，避免同名分頁或順序變動讀錯。
