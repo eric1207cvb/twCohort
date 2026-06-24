@@ -234,7 +234,7 @@ function getDispatchAppData(payload) {
       forceFresh: Boolean(payload && payload.forceFresh)
     });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const allowedStationCodes = new Set(context.stations.map((station) => station.code));
     const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
@@ -319,7 +319,7 @@ function getDispatchFairnessStats(payload) {
     };
     const source = loadDispatchSource_();
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const allowedStationCodes = new Set(context.stations.map((station) => station.code));
     const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
@@ -373,7 +373,7 @@ function getStationHeadcountByDate(payload) {
     const asOfDate = normalizeDate_(payload && payload.asOfDate ? payload.asOfDate : getTodayDateString_(), '查詢日期');
     const source = loadDispatchSource_();
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const result = resolveStationHeadcountAtDate_(source, context, asOfDate, { testMode: context.viewer.testMode });
     return { success: true, asOfDate, stations: result.stations, needsDispatch: result.needsDispatch };
@@ -434,13 +434,20 @@ function runDispatchStorageMaintenance(payload) {
   }
 }
 
+function resolvePayloadTestMode_(payload) {
+  if (!payload || typeof payload !== 'object' || !Object.prototype.hasOwnProperty.call(payload, 'testMode')) {
+    return undefined;
+  }
+  return Boolean(payload.testMode);
+}
+
 function buildDispatchStorageAdminContext_(payload, viewerEmail) {
   if (!viewerEmail) {
     throw new Error('無法辨識目前登入帳號。');
   }
   const source = loadDispatchSource_();
   const context = buildDispatchContext_(source, viewerEmail, {
-    testMode: Boolean(payload && payload.testMode)
+    testMode: resolvePayloadTestMode_(payload)
   });
   assertCanCreateStation_(context);
   return context;
@@ -545,7 +552,7 @@ function saveWorkHourDispatch(payload) {
 
     const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const normalized = normalizeWorkHourPayload_(payload, context, viewerEmail);
     const records = getStoredDispatchRecords_(context);
@@ -646,7 +653,7 @@ function saveWorkHourDispatchBatch(payload) {
 
     const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const assignmentKeys = normalizeAssignmentKeys_(payload && payload.assignmentKeys);
     if (!assignmentKeys.length) {
@@ -722,7 +729,7 @@ function savePendingWorkHourDispatch(payload) {
 
     const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const normalized = normalizePendingWorkHourPayload_(payload, source, context, viewerEmail);
     const records = getStoredDispatchRecords_(context);
@@ -787,7 +794,7 @@ function assignPendingWorkHourDispatch(payload) {
 
     const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const records = getStoredDispatchRecords_(context);
     const targetIndex = records.findIndex((record) => record.id === id && record.status === '有效');
@@ -872,7 +879,7 @@ function deleteWorkHourDispatch(payload) {
 
     const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const records = getStoredDispatchRecords_(context);
     const targetIndex = records.findIndex((record) => record.id === id && record.status === '有效');
@@ -930,7 +937,7 @@ function createMobileStation(payload) {
 
     const source = loadDispatchSource_({ forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     assertCanCreateStation_(context);
     const effectiveSource = context.viewer.testMode ? applyTestStationOverrides_(source) : source;
@@ -990,7 +997,7 @@ function deleteMobileStation(payload) {
 
     const source = loadDispatchSource_({ forceFresh: true });
     const context = buildDispatchContext_(source, viewerEmail, {
-      testMode: Boolean(payload && payload.testMode)
+      testMode: resolvePayloadTestMode_(payload)
     });
     const stationCode = normalizeOrgCode_(payload && payload.stationCode);
     if (!stationCode) {
@@ -1901,8 +1908,13 @@ function normalizeTestStationRecord_(station) {
 
 function buildDispatchContext_(source, viewerEmail, options) {
   const canUseTestMode = canUseTestMode_(viewerEmail, source.assignments);
-  const testMode = Boolean(options && options.testMode && canUseTestMode);
-  if (options && options.testMode && !canUseTestMode) {
+  const hasExplicitTestMode = Boolean(options
+    && Object.prototype.hasOwnProperty.call(options, 'testMode')
+    && typeof options.testMode !== 'undefined');
+  const defaultTestMode = shouldDefaultToTestMode_(viewerEmail);
+  const requestedTestMode = hasExplicitTestMode ? Boolean(options.testMode) : defaultTestMode;
+  const testMode = Boolean(requestedTestMode && canUseTestMode);
+  if (requestedTestMode && !canUseTestMode) {
     throw new Error('您沒有測試模式權限。');
   }
   const effectiveSource = testMode ? applyTestStationOverrides_(source) : source;
@@ -1983,6 +1995,7 @@ function buildDispatchContext_(source, viewerEmail, options) {
       name: String(viewerPerson.name || viewerAssignment.name || '').trim(),
       isStationManager,
       canUseTestMode,
+      defaultTestMode,
       canCreateStation: isStationManager || canUseTestMode,
       managedStationCodes: Array.from(managedStationCodes),
       testMode
@@ -2073,6 +2086,11 @@ function canUseTestMode_(viewerEmail, assignments) {
     normalizeEmail_(assignment.email) === normalizedViewerEmail
     && testerTitles.includes(String(assignment.title || '').trim())
   ));
+}
+
+function shouldDefaultToTestMode_(viewerEmail) {
+  const normalizedViewerEmail = normalizeEmail_(viewerEmail);
+  return Boolean(normalizedViewerEmail && getTesterEmails_().includes(normalizedViewerEmail));
 }
 
 function getTesterEmails_() {
