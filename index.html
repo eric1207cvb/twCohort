@@ -1780,6 +1780,7 @@
               <div class="station-select-stack">
                 <div class="station-field-actions">
                   <button class="btn btn-ghost hidden" type="button" id="add-mobile-station-btn">新增行動駐站</button>
+                  <button class="btn btn-ghost btn-danger hidden" type="button" id="delete-station-btn">刪除此駐站</button>
                 </div>
                 <select id="station-select" class="station-select-native" required tabindex="-1" aria-hidden="true"></select>
                 <div class="station-picker" id="station-picker">
@@ -2233,6 +2234,7 @@
         'viewer-email',
         'login-notice',
         'add-mobile-station-btn',
+        'delete-station-btn',
         'test-mode-btn',
         'toolbar',
         'loading',
@@ -2343,6 +2345,7 @@
 
     function bindEvents() {
       el.addMobileStationBtn.addEventListener('click', openStationModal);
+      el.deleteStationBtn.addEventListener('click', deleteSelectedStation);
       el.reloadBtn.addEventListener('click', () => loadData(collectFilters()));
       el.exportRecordsBtn.addEventListener('click', exportRecordsToExcel);
       el.fairnessLoadBtn.addEventListener('click', () => loadFairnessStats({ reason: 'manual' }));
@@ -2918,12 +2921,20 @@
     function renderStationCreateControl() {
       const canCreate = Boolean(state.viewer && state.viewer.canCreateStation);
       el.addMobileStationBtn.classList.toggle('hidden', !canCreate);
+      if (el.deleteStationBtn) {
+        el.deleteStationBtn.classList.toggle('hidden', !canCreate);
+      }
       updateStationActionButtons();
     }
 
     function updateStationActionButtons() {
       const canManageStations = Boolean(state.viewer && state.viewer.canCreateStation);
       el.addMobileStationBtn.disabled = !canManageStations || state.isCreatingStation;
+      if (el.deleteStationBtn) {
+        const stationCode = el.stationSelect.value;
+        const canDelete = stationCode && canAdministrateStation(stationCode);
+        el.deleteStationBtn.disabled = !canDelete || state.isDeletingStation || state.isCreatingStation;
+      }
     }
 
     function canAdministrateStation(stationCode) {
@@ -3551,6 +3562,54 @@
         .toUpperCase()
         .replace(new RegExp(`^${escapeRegExp(MOBILE_STATION_CODE_PREFIX.toUpperCase())}`), '')
         .replace(new RegExp(`^${escapeRegExp(STATION_CODE_PREFIX)}`), '');
+    }
+
+    async function deleteSelectedStation() {
+      if (state.isDeletingStation || state.isCreatingStation) return;
+      
+      const stationCode = el.stationSelect.value;
+      if (!stationCode) {
+        setStatus('請選擇要刪除的行動駐站。', 'error');
+        return;
+      }
+      
+      const station = getStationByCode(stationCode);
+      if (!station) return;
+
+      if (!window.confirm(`確定要停用並刪除行動駐站「${getStationDisplayName(station)}」嗎？`)) {
+        return;
+      }
+
+      state.isDeletingStation = true;
+      updateStationActionButtons();
+      showBusy('正在刪除行動駐站...', '刪除後該站點將無法再被調派。');
+
+      try {
+        const response = await callServer('deleteMobileStation', { 
+          stationCode, 
+          testMode: state.testMode 
+        });
+        
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '刪除行動駐站失敗。');
+        }
+        
+        applyData(response);
+        if (response.deletedStationCode === el.stationSelect.value) {
+          el.stationSelect.value = '';
+          syncStationPicker();
+          renderOriginStationOptions();
+          renderFormNurseOptions();
+          updateDispatchRuleNote();
+        }
+        setStatus(`行動駐站已刪除。`, 'success');
+      } catch (error) {
+        setStatus(error && error.message ? error.message : '刪除行動駐站失敗。', 'error');
+      } finally {
+        state.isDeletingStation = false;
+        updateStationActionButtons();
+        hideBusy();
+      }
     }
 
     async function saveStation(event) {
