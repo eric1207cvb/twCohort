@@ -565,6 +565,28 @@
       min-width: 0;
     }
 
+    .schedule-rendering {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #f8fafc;
+      padding: 16px;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+
+    .schedule-rendering .inline-loading {
+      justify-content: flex-start;
+      font-weight: 900;
+    }
+
+    .schedule-rendering-detail {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
     .schedule-matrix-wrap {
       overflow: auto;
       border: 1px solid var(--line);
@@ -969,6 +991,22 @@
     .station-color-20 { background: #b45309; }
     .station-color-21 { background: #6d28d9; }
 
+    .station-color-swatch.is-mobile {
+      box-shadow:
+        inset 0 0 0 1px rgba(15, 23, 42, 0.22),
+        0 0 0 2px rgba(250, 250, 250, 0.9),
+        0 0 8px rgba(250, 204, 21, 0.45);
+    }
+
+    .station-color-mobile-0 { background: #faff00; }
+    .station-color-mobile-1 { background: #39ff14; }
+    .station-color-mobile-2 { background: #00f5ff; }
+    .station-color-mobile-3 { background: #38bdf8; }
+    .station-color-mobile-4 { background: #ff4ecd; }
+    .station-color-mobile-5 { background: #ff2e63; }
+    .station-color-mobile-6 { background: #ff9f1c; }
+    .station-color-mobile-7 { background: #b8ff3c; }
+
     .schedule-cell {
       vertical-align: top;
       background: #fff;
@@ -1091,14 +1129,6 @@
       color: #b91c1c;
     }
 
-    .schedule-pending-line {
-      margin-top: 4px;
-      color: #92400e;
-      font-size: 0.74rem;
-      font-weight: 900;
-      line-height: 1.25;
-    }
-
     .month-cell-summary {
       display: grid;
       gap: 5px;
@@ -1157,11 +1187,6 @@
     .month-flow-pill.is-out {
       background: #fee2e2;
       color: #b91c1c;
-    }
-
-    .month-flow-pill.is-pending {
-      background: #fef3c7;
-      color: #92400e;
     }
 
     .month-days-line {
@@ -1257,40 +1282,82 @@
 
     .movement-task.is-pending {
       border-style: dashed;
-      background: #fffbeb;
     }
 
     .movement-task.is-pending .movement-entry-text {
-      color: #92400e;
+      color: var(--text);
     }
 
-    .movement-task-tone-0 { background: #ecfdf5; border-color: #0f766e; }
-    .movement-task-tone-1 { background: #eff6ff; border-color: #2563eb; }
-    .movement-task-tone-2 { background: #f5f3ff; border-color: #7c3aed; }
-    .movement-task-tone-3 { background: #fdf2f8; border-color: #db2777; }
-    .movement-task-tone-4 { background: #fff7ed; border-color: #ea580c; }
-    .movement-task-tone-5 { background: #f0fdfa; border-color: #0891b2; }
-    .movement-task-tone-6 { background: #fefce8; border-color: #ca8a04; }
-    .movement-task-tone-7 { background: #fef2f2; border-color: #dc2626; }
+    .movement-task.station-color-0 { background: #ecfdf5; border-color: #0f766e; }
+    .movement-task.station-color-1 { background: #eff6ff; border-color: #2563eb; }
+    .movement-task.station-color-2 { background: #f5f3ff; border-color: #7c3aed; }
+    .movement-task.station-color-3 { background: #fdf2f8; border-color: #db2777; }
+    .movement-task.station-color-4 { background: #fef2f2; border-color: #dc2626; }
+    .movement-task.station-color-5 { background: #fff7ed; border-color: #ea580c; }
+    .movement-task.station-color-6 { background: #fefce8; border-color: #ca8a04; }
+    .movement-task.station-color-7 { background: #f0fdf4; border-color: #16a34a; }
+    .movement-task.station-color-8 { background: #ecfeff; border-color: #0891b2; }
+    .movement-task.station-color-9 { background: #eef2ff; border-color: #4f46e5; }
+    .movement-task.station-color-10 { background: #fff1f2; border-color: #be123c; }
+    .movement-task.station-color-11 { background: #fffbeb; border-color: #854d0e; }
+    .movement-task.station-color-12 { background: #f0fdf4; border-color: #15803d; }
+    .movement-task.station-color-13 { background: #faf5ff; border-color: #9333ea; }
+    .movement-task.station-color-14 { background: #f0f9ff; border-color: #0369a1; }
+    .movement-task.station-color-15 { background: #fff7ed; border-color: #c2410c; }
+    .movement-task.station-color-16 { background: #f7fee7; border-color: #65a30d; }
+    .movement-task.station-color-17 { background: #f0fdfa; border-color: #0d9488; }
+    .movement-task.station-color-18 { background: #fff1f2; border-color: #e11d48; }
+    .movement-task.station-color-19 { background: #eff6ff; border-color: #1d4ed8; }
+    .movement-task.station-color-20 { background: #fffbeb; border-color: #b45309; }
+    .movement-task.station-color-21 { background: #f5f3ff; border-color: #6d28d9; }
+    .movement-task.station-color-mobile-0 { background: #feffcf; border-color: #d4d800; }
+    .movement-task.station-color-mobile-1 { background: #e8ffd9; border-color: #22c55e; }
+    .movement-task.station-color-mobile-2 { background: #d9fdff; border-color: #06b6d4; }
+    .movement-task.station-color-mobile-3 { background: #e0f2fe; border-color: #38bdf8; }
+    .movement-task.station-color-mobile-4 { background: #ffe3f7; border-color: #db2777; }
+    .movement-task.station-color-mobile-5 { background: #ffe4ec; border-color: #e11d48; }
+    .movement-task.station-color-mobile-6 { background: #fff3d8; border-color: #ea580c; }
+    .movement-task.station-color-mobile-7 { background: #f2ffd6; border-color: #65a30d; }
 
     .movement-entry-row {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 7px;
+      display: grid;
+      gap: 6px;
     }
 
     .movement-entry-text {
       min-width: 0;
-      flex: 1 1 auto;
+      display: grid;
+      gap: 3px;
+      overflow-wrap: normal;
+    }
+
+    .movement-entry-main {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 3px 7px;
+      line-height: 1.35;
+    }
+
+    .movement-entry-date,
+    .movement-entry-status,
+    .movement-entry-person {
+      white-space: nowrap;
+    }
+
+    .movement-entry-date {
+      font-weight: 900;
+    }
+
+    .movement-entry-status {
+      font-weight: 900;
     }
 
     .movement-entry-actions {
-      flex: 0 0 auto;
       display: flex;
       gap: 4px;
       flex-wrap: wrap;
-      justify-content: flex-end;
+      justify-content: flex-start;
     }
 
     .movement-action-btn {
@@ -1439,6 +1506,16 @@
       box-shadow: var(--shadow);
     }
 
+    .station-modal.headcount-modal {
+      width: min(1180px, 100%);
+    }
+
+    .headcount-content {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
     .modal-header,
     .modal-footer {
       padding: 16px 18px;
@@ -1494,6 +1571,19 @@
 
     .code-preview.is-invalid {
       color: #c0392b;
+    }
+
+    .mobile-station-color-preview {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 900;
+    }
+
+    .mobile-station-color-preview .station-color-swatch {
+      margin-top: 0;
     }
 
     .loading-screen {
@@ -1779,8 +1869,8 @@
               <label for="station-picker-button">調派駐站</label>
               <div class="station-select-stack">
                 <div class="station-field-actions">
-                  <button class="btn btn-ghost hidden" type="button" id="add-mobile-station-btn">新增行動駐站</button>
-                  <button class="btn btn-ghost btn-danger hidden" type="button" id="delete-station-btn">刪除此駐站</button>
+                  <button class="btn btn-ghost hidden" type="button" id="add-mobile-station-btn">新增駐站</button>
+                  <button class="btn btn-danger hidden" type="button" id="delete-station-btn">刪除駐站</button>
                 </div>
                 <select id="station-select" class="station-select-native" required tabindex="-1" aria-hidden="true"></select>
                 <div class="station-picker" id="station-picker">
@@ -1828,8 +1918,8 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <div class="panel-title" id="schedule-title">日</div>
-              <div class="muted" id="schedule-description">依畫面寬度顯示合適天數，按日標示人力與異動。</div>
+              <div class="panel-title" id="schedule-title">週</div>
+              <div class="muted" id="schedule-description">從本週開始，依駐站與週次標示調入、調出與人數變化。</div>
             </div>
           </div>
           <div class="panel-body">
@@ -1840,7 +1930,7 @@
                     <label for="schedule-view">檢視</label>
                     <select id="schedule-view">
                       <option value="day">日</option>
-                      <option value="week">週</option>
+                      <option value="week" selected>週</option>
                       <option value="month">月</option>
                     </select>
                   </div>
@@ -1862,71 +1952,18 @@
                 </div>
               </aside>
               <div class="schedule-main">
+                <div id="schedule-rendering" class="schedule-rendering hidden" role="status" aria-live="polite">
+                  <span class="inline-loading">
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span id="schedule-rendering-message">正在產生月曆...</span>
+                  </span>
+                  <div class="schedule-rendering-detail" id="schedule-rendering-detail">調動資料較多時需要幾秒鐘，完成後會自動顯示。</div>
+                </div>
                 <div id="schedule-empty" class="empty hidden">目前沒有可產生日曆的駐站資料。</div>
                 <div id="schedule-matrix-wrap" class="schedule-matrix-wrap hidden">
                   <table class="schedule-matrix" id="schedule-table">
                     <thead id="schedule-head"></thead>
                     <tbody id="schedule-body"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <div class="panel-title">駐站真實人數（依日期）</div>
-              <div class="muted">以選定日期解析各駐站真實人數（基底 − 當日調出 + 當日調入），並標示需要被調派的人員。</div>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div class="records-query" id="headcount-toolbar">
-              <div class="field">
-                <label for="headcount-date">查詢日期</label>
-                <input id="headcount-date" type="date">
-              </div>
-              <div class="records-actions">
-                <button class="btn btn-primary" type="button" id="headcount-load-btn">查詢真實人數</button>
-              </div>
-            </div>
-            <div class="status" id="headcount-status"></div>
-            <div class="fairness-grid">
-              <div class="fairness-table-card">
-                <div class="fairness-table-header">
-                  <div class="fairness-table-title">各駐站真實人數</div>
-                  <div class="muted" id="headcount-station-count">0 筆</div>
-                </div>
-                <div class="fairness-table-wrap">
-                  <table class="fairness-station-table">
-                    <thead>
-                      <tr>
-                        <th>駐站</th>
-                        <th>基底</th>
-                        <th>調入</th>
-                        <th>調出</th>
-                        <th>真實人數</th>
-                      </tr>
-                    </thead>
-                    <tbody id="headcount-station-body"></tbody>
-                  </table>
-                </div>
-              </div>
-              <div class="fairness-table-card">
-                <div class="fairness-table-header">
-                  <div class="fairness-table-title">需要被調派</div>
-                  <div class="muted" id="needs-dispatch-count">0 筆</div>
-                </div>
-                <div class="fairness-table-wrap">
-                  <table class="fairness-nurse-table">
-                    <thead>
-                      <tr>
-                        <th>護理師</th>
-                        <th>基底駐站</th>
-                      </tr>
-                    </thead>
-                    <tbody id="needs-dispatch-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -2041,21 +2078,17 @@
       <section class="station-modal">
         <div class="modal-header">
           <div>
-            <div class="panel-title" id="station-modal-title">新增行動駐站</div>
-            <div class="muted" id="station-modal-description">建立臨時行動駐站，並從職稱為駐站管理員的人選中指定管理員。</div>
+            <div class="panel-title" id="station-modal-title">新增駐站</div>
+            <div class="muted" id="station-modal-description">建立系統新增駐站，並從職稱為駐站管理員的人選中指定管理員。</div>
           </div>
           <button class="btn btn-ghost" type="button" id="station-modal-close">關閉</button>
         </div>
         <form id="station-form">
           <div class="station-form">
             <div class="field">
-              <label for="station-code-suffix">英文尾碼</label>
-              <input id="station-code-suffix" type="text" maxlength="24" placeholder="例如 ABC" autocomplete="off" required>
-              <div class="code-preview" id="station-code-preview">完整代碼：GRP-CO-protable-</div>
-            </div>
-            <div class="field">
               <label for="station-name">駐站中文名稱</label>
               <input id="station-name" type="text" maxlength="80" placeholder="請輸入駐站名稱" required>
+              <div class="mobile-station-color-preview" id="station-color-preview"></div>
             </div>
             <div class="field">
               <label for="station-manager">駐站管理員</label>
@@ -2065,10 +2098,100 @@
             <div class="status" id="station-status"></div>
           </div>
           <div class="modal-footer">
-            <div class="muted">名單來源：人員職務配置中職稱為「駐站管理員」者。</div>
-            <button class="btn btn-primary" type="submit" id="station-save-btn">新增行動駐站</button>
+            <div class="muted">名單來源：人員職務配置中職稱為「駐站管理員」者。系統會保留新增歷程。</div>
+            <button class="btn btn-primary" type="submit" id="station-save-btn">新增駐站</button>
           </div>
         </form>
+      </section>
+    </div>
+
+    <div class="modal-overlay hidden" id="delete-station-modal" role="dialog" aria-modal="true" aria-labelledby="delete-station-title">
+      <section class="station-modal">
+        <div class="modal-header">
+          <div>
+            <div class="panel-title" id="delete-station-title">刪除駐站</div>
+            <div class="muted">停用透過系統新增的駐站；原始資料列會保留刪除日期與刪除人員。</div>
+          </div>
+          <button class="btn btn-ghost" type="button" id="delete-station-close">關閉</button>
+        </div>
+        <div class="station-form">
+          <div class="field">
+            <label for="delete-station-select">要刪除的駐站</label>
+            <select id="delete-station-select"></select>
+          </div>
+          <div class="rule-note">刪除前系統會確認沒有已指派調派與人員配置；待指派需求會一併取消並保留操作歷程。</div>
+          <div class="status" id="delete-station-status"></div>
+        </div>
+        <div class="modal-footer">
+          <div class="muted">目前僅允許刪除由本系統新增的駐站；正式來源駐站不會在此停用。</div>
+          <div class="button-row">
+            <button class="btn btn-ghost" type="button" id="delete-station-cancel-btn">取消</button>
+            <button class="btn btn-danger" type="button" id="delete-station-save-btn">刪除駐站</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-overlay hidden" id="headcount-modal" role="dialog" aria-modal="true" aria-labelledby="headcount-modal-title">
+      <section class="station-modal headcount-modal">
+        <div class="modal-header">
+          <div>
+            <div class="panel-title" id="headcount-modal-title">駐站真實人數（依日期）</div>
+            <div class="muted">以選定日期解析各駐站真實人數（基底 - 當日調出 + 當日調入），並標示需要被調派的人員。</div>
+          </div>
+          <button class="btn btn-ghost" type="button" id="headcount-modal-close">關閉</button>
+        </div>
+        <div class="headcount-content">
+          <div class="records-query" id="headcount-toolbar">
+            <div class="field">
+              <label for="headcount-date">查詢日期</label>
+              <input id="headcount-date" type="date">
+            </div>
+            <div class="records-actions">
+              <button class="btn btn-primary" type="button" id="headcount-load-btn">查詢真實人數</button>
+            </div>
+          </div>
+          <div class="status" id="headcount-status"></div>
+          <div class="fairness-grid">
+            <div class="fairness-table-card">
+              <div class="fairness-table-header">
+                <div class="fairness-table-title">各駐站真實人數</div>
+                <div class="muted" id="headcount-station-count">0 筆</div>
+              </div>
+              <div class="fairness-table-wrap">
+                <table class="fairness-station-table">
+                  <thead>
+                    <tr>
+                      <th>駐站</th>
+                      <th>基底</th>
+                      <th>調入</th>
+                      <th>調出</th>
+                      <th>真實人數</th>
+                    </tr>
+                  </thead>
+                  <tbody id="headcount-station-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="fairness-table-card">
+              <div class="fairness-table-header">
+                <div class="fairness-table-title">需要被調派</div>
+                <div class="muted" id="needs-dispatch-count">0 筆</div>
+              </div>
+              <div class="fairness-table-wrap">
+                <table class="fairness-nurse-table">
+                  <thead>
+                    <tr>
+                      <th>護理師</th>
+                      <th>基底駐站</th>
+                    </tr>
+                  </thead>
+                  <tbody id="needs-dispatch-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -2122,10 +2245,11 @@
       stationModalType: 'general',
       isStationFormDirty: false,
       testMode: false,
-      scheduleView: 'day',
+      scheduleView: 'week',
       scheduleYear: new Date().getFullYear(),
       scheduleDate: getTodayString(),
       scheduleDayCount: 1,
+      rememberedDispatchRange: null,
       stationByCode: new Map(),
       managedStationCodeSet: new Set(),
       administratedStationCodeSet: new Set(),
@@ -2139,6 +2263,9 @@
       scheduleStations: [],
       orderedStations: [],
       scheduleMovementCache: new Map(),
+      scheduleRecordsByStation: new Map(),
+      scheduleRenderId: 0,
+      scheduleRenderTimer: 0,
       stationCountCache: new Map(),
       loginNoticeKey: '',
       loginNoticeTimer: null,
@@ -2177,7 +2304,8 @@
     const MOBILE_STATION_CODE_PREFIX = 'GRP-CO-protable-';
     const RECORDS_AUTO_REFRESH_MS = 45000;
     const STATION_COLOR_CLASS_COUNT = 22;
-    const MOVEMENT_TASK_TONE_COUNT = 8;
+    const MOBILE_STATION_COLOR_CLASS_COUNT = 8;
+    const MOBILE_STATION_COLOR_LABELS = ['螢光黃', '螢光綠', '螢光青', '亮藍', '螢光粉', '螢光桃紅', '螢光橘', '亮萊姆'];
 
     // 北到南排序，月曆、駐站下拉與護理師清單共用。
     const SCHEDULE_STATION_RULES = [
@@ -2222,9 +2350,14 @@
       updateFairnessRange();
       renderFairnessStats();
       updateScheduleControls();
+      const initialFilters = getScheduleInitialLoadFilters(year, today);
+      el.filterDateFrom.value = initialFilters.dateFrom;
+      el.filterDateTo.value = initialFilters.dateTo;
       loadData({
-        dateFrom: today,
-        dateTo: getScheduleDayRangeEnd(today)
+        ...initialFilters,
+        forceFresh: true
+      }, {
+        reason: 'initial'
       });
     });
 
@@ -2248,6 +2381,8 @@
         'filter-station',
         'filter-nurse',
         'record-count-display',
+        'headcount-modal',
+        'headcount-modal-close',
         'headcount-date',
         'headcount-load-btn',
         'headcount-status',
@@ -2280,6 +2415,9 @@
         'schedule-year',
         'schedule-year-load',
         'print-schedule-btn',
+        'schedule-rendering',
+        'schedule-rendering-message',
+        'schedule-rendering-detail',
         'schedule-table',
         'schedule-empty',
         'schedule-matrix-wrap',
@@ -2323,13 +2461,18 @@
         'station-modal-description',
         'station-modal-close',
         'station-form',
-        'station-code-suffix',
-        'station-code-preview',
+        'station-color-preview',
         'station-name',
         'station-manager',
         'station-manager-options',
         'station-status',
         'station-save-btn',
+        'delete-station-modal',
+        'delete-station-close',
+        'delete-station-cancel-btn',
+        'delete-station-select',
+        'delete-station-status',
+        'delete-station-save-btn',
         'pending-assignment-modal',
         'pending-assignment-title',
         'pending-assignment-description',
@@ -2343,10 +2486,28 @@
       });
     }
 
+    function getScheduleInitialLoadFilters(year, today) {
+      const normalizedYear = normalizeYear(year);
+      const normalizedToday = normalizeDateInput(today) || getTodayString();
+      if (state.scheduleView === 'day') {
+        return {
+          dateFrom: normalizedToday,
+          dateTo: getScheduleDayRangeEnd(normalizedToday)
+        };
+      }
+      return {
+        dateFrom: `${normalizedYear}-01-01`,
+        dateTo: `${normalizedYear}-12-31`
+      };
+    }
+
     function bindEvents() {
       el.addMobileStationBtn.addEventListener('click', openStationModal);
-      el.deleteStationBtn.addEventListener('click', deleteSelectedStation);
-      el.reloadBtn.addEventListener('click', () => loadData(collectFilters()));
+      el.deleteStationBtn.addEventListener('click', openDeleteStationModal);
+      el.reloadBtn.addEventListener('click', () => loadData({
+        ...collectFilters(),
+        forceFresh: true
+      }, { reason: 'manual' }));
       el.exportRecordsBtn.addEventListener('click', exportRecordsToExcel);
       el.fairnessLoadBtn.addEventListener('click', () => loadFairnessStats({ reason: 'manual' }));
       if (el.headcountLoadBtn) el.headcountLoadBtn.addEventListener('click', () => loadStationHeadcount());
@@ -2439,12 +2600,14 @@
         if (!el.dispatchEndDate.value || el.dispatchEndDate.value < el.dispatchStartDate.value) {
           el.dispatchEndDate.value = el.dispatchStartDate.value;
         }
+        rememberDispatchDateRange();
       });
       el.dispatchEndDate.addEventListener('change', () => {
         if (el.dispatchStartDate.value && el.dispatchEndDate.value < el.dispatchStartDate.value) {
           el.dispatchEndDate.value = el.dispatchStartDate.value;
           setStatus('調派迄日已調整為不早於起日。', 'error');
         }
+        rememberDispatchDateRange();
       });
       el.startTime.addEventListener('input', updateHoursFromTimes);
       el.endTime.addEventListener('input', updateHoursFromTimes);
@@ -2470,12 +2633,21 @@
       el.stationModal.addEventListener('click', (event) => {
         if (event.target === el.stationModal) closeStationModal();
       });
+      el.deleteStationClose.addEventListener('click', closeDeleteStationModal);
+      el.deleteStationCancelBtn.addEventListener('click', closeDeleteStationModal);
+      el.deleteStationModal.addEventListener('click', (event) => {
+        if (event.target === el.deleteStationModal) closeDeleteStationModal();
+      });
+      el.deleteStationSaveBtn.addEventListener('click', deleteStation);
+      el.headcountModalClose.addEventListener('click', closeHeadcountModal);
+      el.headcountModal.addEventListener('click', (event) => {
+        if (event.target === el.headcountModal) closeHeadcountModal();
+      });
       el.pendingAssignmentClose.addEventListener('click', closePendingAssignmentModal);
       el.pendingAssignmentModal.addEventListener('click', (event) => {
         if (event.target === el.pendingAssignmentModal) closePendingAssignmentModal();
       });
       el.pendingAssignmentSaveBtn.addEventListener('click', assignPendingRecord);
-      el.stationCodeSuffix.addEventListener('input', updateStationCodePreview);
       el.stationForm.addEventListener('submit', saveStation);
       // 追蹤表單修改狀態，供關閉攔截與分頁離開提示使用（Issue #9）。
       el.stationForm.addEventListener('input', markStationFormDirty);
@@ -2628,9 +2800,6 @@
       if (el.headcountDate && !el.headcountDate.value) {
         el.headcountDate.value = getTodayString();
       }
-      if (shouldLoadFairness) {
-        window.setTimeout(() => loadStationHeadcount(), 0);
-      }
     }
 
     function rebuildDataIndexes() {
@@ -2717,7 +2886,31 @@
         .sort(compareStationsByDisplayOrder);
 
       state.scheduleMovementCache = new Map();
+      state.scheduleRecordsByStation = buildScheduleRecordsByStationIndex();
       state.stationCountCache = new Map();
+    }
+
+    function buildScheduleRecordsByStationIndex() {
+      const index = new Map();
+      const addRecord = (stationCode, record) => {
+        const code = String(stationCode || '').trim();
+        if (!code) return;
+        if (!index.has(code)) index.set(code, []);
+        index.get(code).push(record);
+      };
+
+      getScheduleSourceRecords().forEach((record) => {
+        if (!record) return;
+        addRecord(record.stationCode, record);
+        if (record.originalStationCode && record.originalStationCode !== record.stationCode) {
+          addRecord(record.originalStationCode, record);
+        }
+      });
+
+      index.forEach((records) => {
+        records.sort((a, b) => String(getRecordStartDate(a)).localeCompare(String(getRecordStartDate(b))));
+      });
+      return index;
     }
 
     function addNurseToMap_(map, nurse) {
@@ -2921,20 +3114,16 @@
     function renderStationCreateControl() {
       const canCreate = Boolean(state.viewer && state.viewer.canCreateStation);
       el.addMobileStationBtn.classList.toggle('hidden', !canCreate);
-      if (el.deleteStationBtn) {
-        el.deleteStationBtn.classList.toggle('hidden', !canCreate);
-      }
+      el.deleteStationBtn.classList.toggle('hidden', !canCreate);
       updateStationActionButtons();
     }
 
     function updateStationActionButtons() {
       const canManageStations = Boolean(state.viewer && state.viewer.canCreateStation);
       el.addMobileStationBtn.disabled = !canManageStations || state.isCreatingStation;
-      if (el.deleteStationBtn) {
-        const stationCode = el.stationSelect.value;
-        const canDelete = stationCode && canAdministrateStation(stationCode);
-        el.deleteStationBtn.disabled = !canDelete || state.isDeletingStation || state.isCreatingStation;
-      }
+      el.deleteStationBtn.disabled = !canManageStations
+        || state.isDeletingStation
+        || !getDeletableStations().length;
     }
 
     function canAdministrateStation(stationCode) {
@@ -3509,7 +3698,7 @@
     function openStationModal() {
       resetStationForm();
       el.stationModal.classList.remove('hidden');
-      el.stationCodeSuffix.focus();
+      el.stationName.focus();
     }
 
     function closeStationModal(force) {
@@ -3524,6 +3713,104 @@
       setStationStatus('');
     }
 
+    function getDeletableStations() {
+      if (!(state.viewer && state.viewer.canCreateStation)) return [];
+      return getOrderedStations()
+        .filter((station) => (
+          station
+          && station.isMobile
+          && station.code
+        ));
+    }
+
+    function openDeleteStationModal() {
+      renderDeleteStationOptions();
+      el.deleteStationModal.classList.remove('hidden');
+      if (!el.deleteStationSelect.disabled) el.deleteStationSelect.focus();
+    }
+
+    function closeDeleteStationModal(force) {
+      if (state.isDeletingStation && !force) return;
+      el.deleteStationModal.classList.add('hidden');
+      setDeleteStationStatus('');
+    }
+
+    function renderDeleteStationOptions() {
+      const stations = getDeletableStations();
+      if (!stations.length) {
+        el.deleteStationSelect.innerHTML = '<option value="">目前沒有可刪除的系統新增駐站</option>';
+        el.deleteStationSelect.disabled = true;
+        el.deleteStationSaveBtn.disabled = true;
+        setDeleteStationStatus('目前只允許刪除由本系統新增、且仍未被停用的駐站；正式來源駐站不會列在這裡。');
+        return;
+      }
+      el.deleteStationSelect.innerHTML = stations.map((station) => (
+        `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
+      )).join('');
+      el.deleteStationSelect.disabled = false;
+      el.deleteStationSaveBtn.disabled = state.isDeletingStation;
+      setDeleteStationStatus('');
+    }
+
+    async function deleteStation() {
+      if (state.isDeletingStation) return;
+      const stationCode = String(el.deleteStationSelect.value || '').trim();
+      const station = getStationByCode(stationCode);
+      const stationName = station ? getStationDisplayName(station) : stationCode;
+      if (!stationCode || !station) {
+        setDeleteStationStatus('請先選擇要刪除的駐站。', 'error');
+        return;
+      }
+      const confirmed = window.confirm([
+        `確定要刪除「${stationName}」？`,
+        '',
+        '系統會從月曆與下拉選單停用此駐站；若有待指派需求會一併取消，並保留新增、刪除與取消歷程紀錄。'
+      ].join('\n'));
+      if (!confirmed) return;
+
+      state.isDeletingStation = true;
+      updateStationActionButtons();
+      setButtonBusy(el.deleteStationSaveBtn, true, '刪除中');
+      setDeleteStationStatus('刪除中...');
+      showBusy('正在刪除駐站...', '系統會以軟刪除保留原列，並寫入年度操作紀錄。');
+
+      try {
+        const response = await callServer('deleteMobileStation', {
+          stationCode,
+          testMode: state.testMode,
+          filters: collectFilters()
+        });
+        if (!response || !response.success) {
+          throw new Error(response && response.message ? response.message : '刪除駐站失敗。');
+        }
+        applyData(response);
+        closeDeleteStationModal(true);
+        const pendingCount = Number(response.deletedPendingDemandCount || 0);
+        setStatus(pendingCount
+          ? `${stationName} 已刪除，並取消 ${formatNumber(pendingCount)} 筆待指派需求，歷程已保留。`
+          : `${stationName} 已刪除，歷程已保留。`, 'success');
+      } catch (error) {
+        setDeleteStationStatus(error && error.message ? error.message : '刪除駐站失敗。', 'error');
+      } finally {
+        state.isDeletingStation = false;
+        setButtonBusy(el.deleteStationSaveBtn, false, '刪除駐站');
+        updateStationActionButtons();
+        hideBusy();
+      }
+    }
+
+    function openHeadcountModal() {
+      if (el.headcountDate && !el.headcountDate.value) {
+        el.headcountDate.value = getTodayString();
+      }
+      el.headcountModal.classList.remove('hidden');
+      loadStationHeadcount();
+    }
+
+    function closeHeadcountModal() {
+      el.headcountModal.classList.add('hidden');
+    }
+
     function markStationFormDirty() {
       state.isStationFormDirty = true;
     }
@@ -3531,99 +3818,27 @@
     function resetStationForm() {
       el.stationForm.reset();
       renderStationManagerOptions();
-      updateStationCodePreview();
+      updateStationColorPreview();
       setStationStatus('');
       // 重新開啟／重置表單時清除 dirty 狀態，避免沿用上一次的修改旗標（Issue #9）。
       state.isStationFormDirty = false;
     }
 
-    function updateStationCodePreview() {
-      const suffix = normalizeMobileStationSuffixInput(el.stationCodeSuffix.value);
-      const prefix = MOBILE_STATION_CODE_PREFIX;
-      // 即時防呆：輸入當下就檢核尾碼格式並以紅字提示，不必等送出後才由後端報錯（Issue #10）。
-      const suffixError = validateMobileStationSuffix(suffix);
-      el.stationCodePreview.classList.toggle('is-invalid', Boolean(suffixError));
-      el.stationCodePreview.textContent = suffixError
-        ? `完整代碼：${prefix}${suffix}（${suffixError}）`
-        : `完整代碼：${prefix}${suffix}`;
+    function updateStationColorPreview() {
+      const colorKey = getNextMobileStationPreviewColorKey();
+      const colorIndex = getMobileStationColorIndexFromKey(colorKey);
+      const label = MOBILE_STATION_COLOR_LABELS[colorIndex] || '螢光色';
+      el.stationColorPreview.innerHTML = `
+        <span class="station-color-swatch station-color-${escapeHtml(colorKey)} is-mobile" aria-hidden="true"></span>
+        <span>新增後系統會自動分配 ${escapeHtml(label)} 標注。</span>
+      `;
     }
 
-    function validateMobileStationSuffix(suffix) {
-      if (!suffix) return '請輸入英文尾碼';
-      if (!/^[A-Z0-9][A-Z0-9-]{0,23}$/.test(suffix)) {
-        return '僅能使用大寫英文、數字與連字號，最多 24 碼';
-      }
-      return '';
-    }
-
-    function normalizeMobileStationSuffixInput(value) {
-      return String(value || '')
-        .trim()
-        .toUpperCase()
-        .replace(new RegExp(`^${escapeRegExp(MOBILE_STATION_CODE_PREFIX.toUpperCase())}`), '')
-        .replace(new RegExp(`^${escapeRegExp(STATION_CODE_PREFIX)}`), '');
-    }
-
-    async function deleteSelectedStation() {
-      if (state.isDeletingStation || state.isCreatingStation) return;
-      
-      const stationCode = el.stationSelect.value;
-      if (!stationCode) {
-        setStatus('請選擇要刪除的行動駐站。', 'error');
-        return;
-      }
-      
-      const station = getStationByCode(stationCode);
-      if (!station) return;
-
-      if (!window.confirm(`確定要停用並刪除行動駐站「${getStationDisplayName(station)}」嗎？`)) {
-        return;
-      }
-
-      state.isDeletingStation = true;
-      updateStationActionButtons();
-      showBusy('正在刪除行動駐站...', '刪除後該站點將無法再被調派。');
-
-      try {
-        const response = await callServer('deleteMobileStation', { 
-          stationCode, 
-          testMode: state.testMode 
-        });
-        
-        if (!response || !response.success) {
-          throw new Error(response && response.message ? response.message : '刪除行動駐站失敗。');
-        }
-        
-        applyData(response);
-        if (response.deletedStationCode === el.stationSelect.value) {
-          el.stationSelect.value = '';
-          syncStationPicker();
-          renderOriginStationOptions();
-          renderFormNurseOptions();
-          updateDispatchRuleNote();
-        }
-        setStatus(`行動駐站已刪除。`, 'success');
-      } catch (error) {
-        setStatus(error && error.message ? error.message : '刪除行動駐站失敗。', 'error');
-      } finally {
-        state.isDeletingStation = false;
-        updateStationActionButtons();
-        hideBusy();
-      }
-    }
 
     async function saveStation(event) {
       event.preventDefault();
       if (state.isCreatingStation) return;
 
-      // 送出前先做基本防呆，把錯誤擋在輸入階段而非提交後（Issue #10）。
-      const codeSuffix = normalizeMobileStationSuffixInput(el.stationCodeSuffix.value);
-      const suffixError = validateMobileStationSuffix(codeSuffix);
-      if (suffixError) {
-        setStationStatus(`${suffixError}。`, 'error');
-        el.stationCodeSuffix.focus();
-        return;
-      }
       if (!el.stationName.value.trim()) {
         setStationStatus('請輸入駐站中文名稱。', 'error');
         el.stationName.focus();
@@ -3638,7 +3853,6 @@
       }
 
       const payload = {
-        codeSuffix,
         name: el.stationName.value,
         managerEmail,
         testMode: state.testMode,
@@ -3853,7 +4067,7 @@
       }
 
       const confirmMessage = [
-        `確定從月曆移除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的臨時調派？`,
+        `確定從月曆移除 ${formatDispatchDateRange(record)} ${getRecordNurseDisplayName(record)} 的臨時調派？`,
         `原：${getRecordOriginalStationDisplayName(record)}`,
         `至：${getRecordTargetStationDisplayName(record)}`
       ].join('\n');
@@ -4052,6 +4266,10 @@
     }
 
     function buildFairnessNurseRowHtml(stat) {
+      const isPendingConfirmation = Boolean(stat.isPendingConfirmation);
+      const nurseName = isPendingConfirmation
+        ? '待確認'
+        : (stat.nurseName || stat.nurseEmail || '未命名人員');
       const sourceStation = {
         code: stat.originalStationCode,
         name: stat.originalStationName || stat.originalStationCode
@@ -4059,18 +4277,19 @@
       const sourceName = stat.originalStationName || stat.originalStationCode || '未命名原駐站';
       const targetSummary = stat.targetStationSummary || '';
       const tooltip = [
-        stat.nurseName || stat.nurseEmail || '未命名人員',
-        stat.nurseEmail || '',
+        nurseName,
+        isPendingConfirmation ? '待指派需求' : (stat.nurseEmail || ''),
         `原駐站：${sourceName}`,
         targetSummary ? `至：${targetSummary}` : '',
         `徵調 ${formatNumber(stat.dispatchCount)} 次 / ${formatDaysText(stat.dispatchDays)}`,
         stat.latestEndDate ? `最近迄日：${stat.latestEndDate}` : '',
-        stat.nextAllowedDate ? `下次可調派：${stat.nextAllowedDate}` : ''
+        !isPendingConfirmation && stat.nextAllowedDate ? `下次可調派：${stat.nextAllowedDate}` : ''
       ].filter(Boolean).join('\n');
       return `
         <tr title="${escapeHtml(tooltip)}">
-          <td title="${escapeHtml([stat.nurseName || stat.nurseEmail || '未命名人員', stat.nurseEmail || ''].filter(Boolean).join('\n'))}">
-            <div class="cell-main">${escapeHtml(stat.nurseName || stat.nurseEmail || '未命名人員')}</div>
+          <td title="${escapeHtml([nurseName, isPendingConfirmation ? '待指派需求' : (stat.nurseEmail || '')].filter(Boolean).join('\n'))}">
+            <div class="cell-main">${escapeHtml(nurseName)}</div>
+            ${isPendingConfirmation ? '<div class="cell-sub">待指派需求</div>' : ''}
           </td>
           <td title="${escapeHtml([`原駐站：${sourceName}`, targetSummary ? `至：${targetSummary}` : ''].filter(Boolean).join('\n'))}">
             ${buildStationLabelHtml(sourceStation, sourceName)}
@@ -4078,7 +4297,7 @@
           <td><strong>${escapeHtml(formatNumber(stat.dispatchCount))}</strong></td>
           <td>${escapeHtml(formatNumber(stat.dispatchDays))}</td>
           <td>
-            <div class="cell-main">${escapeHtml(stat.nextAllowedDate || '-')}</div>
+            <div class="cell-main">${escapeHtml(isPendingConfirmation ? '-' : (stat.nextAllowedDate || '-'))}</div>
           </td>
         </tr>
       `;
@@ -4118,6 +4337,63 @@
     }
 
     function renderScheduleMatrix() {
+      const renderId = Number(state.scheduleRenderId || 0) + 1;
+      state.scheduleRenderId = renderId;
+      showScheduleRendering();
+      window.clearTimeout(state.scheduleRenderTimer);
+      state.scheduleRenderTimer = window.setTimeout(() => {
+        if (renderId !== state.scheduleRenderId) return;
+        let didFail = false;
+        try {
+          renderScheduleMatrixNow();
+        } catch (error) {
+          didFail = true;
+          console.error('月曆渲染失敗', error);
+          showScheduleRenderError(error);
+        } finally {
+          if (!didFail && renderId === state.scheduleRenderId) hideScheduleRendering();
+        }
+      }, 40);
+    }
+
+    function showScheduleRendering() {
+      if (!el.scheduleRendering) return;
+      const viewText = getScheduleViewLabel(state.scheduleView);
+      if (el.scheduleRenderingMessage) {
+        el.scheduleRenderingMessage.textContent = `正在更新${viewText}檢視...`;
+      }
+      if (el.scheduleRenderingDetail) {
+        el.scheduleRenderingDetail.textContent = '調動資料較多時需要幾秒鐘，完成後會自動顯示。';
+      }
+      el.scheduleRendering.classList.remove('hidden');
+      if (el.scheduleEmpty) el.scheduleEmpty.classList.add('hidden');
+      if (el.scheduleMatrixWrap) el.scheduleMatrixWrap.setAttribute('aria-busy', 'true');
+    }
+
+    function hideScheduleRendering() {
+      if (el.scheduleRendering) el.scheduleRendering.classList.add('hidden');
+      if (el.scheduleMatrixWrap) el.scheduleMatrixWrap.removeAttribute('aria-busy');
+    }
+
+    function showScheduleRenderError(error) {
+      if (!el.scheduleRendering) return;
+      if (el.scheduleRenderingMessage) {
+        el.scheduleRenderingMessage.textContent = '月曆產生失敗，請重新整理後再試。';
+      }
+      if (el.scheduleRenderingDetail) {
+        el.scheduleRenderingDetail.textContent = error && error.message ? error.message : '系統無法完成月曆畫面渲染。';
+      }
+      el.scheduleRendering.classList.remove('hidden');
+    }
+
+    function getScheduleViewLabel(view) {
+      if (view === 'month') return '月';
+      if (view === 'week') return '週';
+      if (isMobileCaseMode()) return '行動收案';
+      return '日';
+    }
+
+    function renderScheduleMatrixNow() {
       const year = Number(state.scheduleYear || new Date().getFullYear());
       const scheduleStations = getScheduleStations();
 
@@ -4271,13 +4547,9 @@
       const movements = getDailyMovementRecords(stationCode, dateString);
       const incomingKeys = new Set();
       const outgoingKeys = new Set();
-      let pendingIncomingCount = 0;
-      let pendingOutgoingCount = 0;
 
       movements.forEach((record) => {
         if (isPendingAssignmentRecord(record)) {
-          if (record.stationCode === stationCode) pendingIncomingCount += getPendingDemandCount(record);
-          if (record.originalStationCode === stationCode) pendingOutgoingCount += getPendingDemandCount(record);
           return;
         }
         if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
@@ -4293,12 +4565,11 @@
       const countText = baseCount === adjustedCount
         ? `人數 ${formatNumber(baseCount)}`
         : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
-      const pendingText = buildPendingDemandText(pendingIncomingCount, pendingOutgoingCount);
       const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, dateString, dateString);
 
       return {
         className,
-        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${pendingText}${movementHtml}`
+        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}`
       };
     }
 
@@ -4312,17 +4583,11 @@
       const outgoingRecords = [];
       let incomingDays = 0;
       let outgoingDays = 0;
-      let pendingIncomingCount = 0;
-      let pendingOutgoingCount = 0;
-      let pendingDays = 0;
 
       movements.forEach((record) => {
         const overlapRange = getRecordOverlapRange(record, month.start, month.end);
         const overlapDays = overlapRange ? countDateRangeDays(overlapRange.start, overlapRange.end) : 0;
         if (isPendingAssignmentRecord(record)) {
-          if (record.stationCode === stationCode) pendingIncomingCount += getPendingDemandCount(record);
-          if (record.originalStationCode === stationCode) pendingOutgoingCount += getPendingDemandCount(record);
-          pendingDays += overlapDays;
           return;
         }
         if (record.stationCode === stationCode) {
@@ -4353,19 +4618,15 @@
         incomingRecords,
         outgoingRecords,
         incomingDays,
-        outgoingDays,
-        pendingIncomingCount,
-        pendingOutgoingCount,
-        pendingDays
+        outgoingDays
       });
-      const flowHtml = movements.length
+      const flowHtml = incomingRecords.length || outgoingRecords.length
         ? `
           <div class="month-flow-line">
             <span class="month-flow-pill is-in">入 ${escapeHtml(formatNumber(incomingKeys.size))}</span>
             <span class="month-flow-pill is-out">出 ${escapeHtml(formatNumber(outgoingKeys.size))}</span>
-            ${pendingIncomingCount || pendingOutgoingCount ? `<span class="month-flow-pill is-pending">待 ${escapeHtml(formatNumber(pendingIncomingCount + pendingOutgoingCount))}</span>` : ''}
           </div>
-          <div class="month-days-line">${escapeHtml(formatNumber(incomingDays + outgoingDays + pendingDays))} 天</div>
+          <div class="month-days-line">${escapeHtml(formatNumber(incomingDays + outgoingDays))} 天</div>
         `
         : '';
 
@@ -4392,8 +4653,7 @@
         `${getStationDisplayName(station)}｜${month.label || ''}`,
         `人數：${formatNumber(summary.baseCount)} → ${formatNumber(summary.adjustedCount)}`,
         `調入：${formatNumber(incomingRecords.length)} 筆 / ${formatDaysText(summary.incomingDays)}`,
-        `調出：${formatNumber(outgoingRecords.length)} 筆 / ${formatDaysText(summary.outgoingDays)}`,
-        `待指派：${formatNumber(Number(summary.pendingIncomingCount || 0) + Number(summary.pendingOutgoingCount || 0))} 筆 / ${formatDaysText(summary.pendingDays)}`
+        `調出：${formatNumber(outgoingRecords.length)} 筆 / ${formatDaysText(summary.outgoingDays)}`
       ];
 
       if (incomingRecords.length) {
@@ -4431,13 +4691,9 @@
       const movements = getWeeklyMovementRecords(stationCode, week);
       const incomingKeys = new Set();
       const outgoingKeys = new Set();
-      let pendingIncomingCount = 0;
-      let pendingOutgoingCount = 0;
 
       movements.forEach((record) => {
         if (isPendingAssignmentRecord(record)) {
-          if (record.stationCode === stationCode) pendingIncomingCount += getPendingDemandCount(record);
-          if (record.originalStationCode === stationCode) pendingOutgoingCount += getPendingDemandCount(record);
           return;
         }
         if (record.stationCode === stationCode) incomingKeys.add(record.assignmentKey);
@@ -4453,12 +4709,11 @@
       const countText = baseCount === adjustedCount
         ? `人數 ${formatNumber(baseCount)}`
         : `人數 ${formatNumber(baseCount)}→${formatNumber(adjustedCount)}`;
-      const pendingText = buildPendingDemandText(pendingIncomingCount, pendingOutgoingCount);
       const movementHtml = buildGroupedMovementEntriesHtml(movements, stationCode, week.start, week.end);
 
       return {
         className,
-        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${pendingText}${movementHtml}`
+        html: `<div class="${countClassName}">${escapeHtml(countText)}</div>${movementHtml}`
       };
     }
 
@@ -4474,15 +4729,6 @@
       return ['schedule-count', buildScheduleCellClassName(adjustedCount, movementCount)]
         .filter(Boolean)
         .join(' ');
-    }
-
-    function buildPendingDemandText(pendingIncomingCount, pendingOutgoingCount) {
-      const parts = [];
-      if (pendingIncomingCount) parts.push(`待補 ${formatNumber(pendingIncomingCount)}`);
-      if (pendingOutgoingCount) parts.push(`待派 ${formatNumber(pendingOutgoingCount)}`);
-      return parts.length
-        ? `<div class="schedule-pending-line">${escapeHtml(parts.join('｜'))}</div>`
-        : '';
     }
 
     function buildScheduleDateHeaderHtml(dateString) {
@@ -4633,11 +4879,79 @@
     }
 
     function buildStationColorSwatchHtml(stationOrCode) {
-      return `<span class="station-color-swatch ${getStationColorClass(stationOrCode)}" aria-hidden="true"></span>`;
+      return `<span class="station-color-swatch ${getStationColorClass(stationOrCode)}${isMobileStation(stationOrCode) ? ' is-mobile' : ''}" aria-hidden="true"></span>`;
     }
 
     function getStationColorClass(stationOrCode) {
+      if (isMobileStation(stationOrCode)) {
+        return `station-color-${getMobileStationColorKey(stationOrCode)}`;
+      }
       return `station-color-${getStationColorIndex(stationOrCode)}`;
+    }
+
+    function isMobileStation(stationOrCode) {
+      const station = typeof stationOrCode === 'string'
+        ? getStationByCode(stationOrCode)
+        : stationOrCode;
+      const stationCode = String(
+        typeof stationOrCode === 'string'
+          ? stationOrCode
+          : (stationOrCode && stationOrCode.code || '')
+      ).trim().toUpperCase();
+      return Boolean(station && station.isMobile)
+        || (stationCode && stationCode.indexOf(MOBILE_STATION_CODE_PREFIX.toUpperCase()) === 0);
+    }
+
+    function getMobileStationColorKey(stationOrCode) {
+      const station = typeof stationOrCode === 'string'
+        ? getStationByCode(stationOrCode)
+        : stationOrCode;
+      const savedKey = normalizeMobileStationColorKey(station && station.colorKey);
+      if (savedKey) return savedKey;
+      const stationCode = String(
+        typeof stationOrCode === 'string'
+          ? stationOrCode
+          : (stationOrCode && stationOrCode.code || '')
+      ).trim();
+      return `mobile-${hashText(stationCode || (station && station.name) || '') % MOBILE_STATION_COLOR_CLASS_COUNT}`;
+    }
+
+    function normalizeMobileStationColorKey(value) {
+      const key = String(value || '').trim().toLowerCase().replace(/^station-color-/, '');
+      const match = key.match(/^mobile-(\d+)$/);
+      if (!match) return '';
+      const index = Number(match[1]);
+      if (!Number.isInteger(index) || index < 0 || index >= MOBILE_STATION_COLOR_CLASS_COUNT) return '';
+      return `mobile-${index}`;
+    }
+
+    function getMobileStationColorIndexFromKey(value) {
+      const key = normalizeMobileStationColorKey(value);
+      const index = Number(String(key).replace('mobile-', ''));
+      return Number.isInteger(index) ? index : 0;
+    }
+
+    function getNextMobileStationPreviewColorKey() {
+      const counts = new Map();
+      for (let index = 0; index < MOBILE_STATION_COLOR_CLASS_COUNT; index += 1) {
+        counts.set(`mobile-${index}`, 0);
+      }
+      (Array.isArray(state.stations) ? state.stations : [])
+        .filter((station) => isMobileStation(station))
+        .forEach((station) => {
+          const key = getMobileStationColorKey(station);
+          counts.set(key, (counts.get(key) || 0) + 1);
+        });
+
+      let selectedKey = 'mobile-0';
+      let selectedCount = Number.POSITIVE_INFINITY;
+      counts.forEach((count, key) => {
+        if (count < selectedCount) {
+          selectedKey = key;
+          selectedCount = count;
+        }
+      });
+      return selectedKey;
     }
 
     function getStationColorIndex(stationOrCode) {
@@ -4722,7 +5036,7 @@
       const today = getTodayString();
       const sourceRecords = dateString === today && Array.isArray(state.currentRecords) && state.currentRecords.length
         ? state.currentRecords
-        : getScheduleSourceRecords();
+        : ((state.scheduleRecordsByStation && state.scheduleRecordsByStation.get(stationCode)) || getScheduleSourceRecords());
 
       sourceRecords.forEach((record) => {
         const temporaryInfo = getTemporaryDispatchInfo(record);
@@ -4755,7 +5069,9 @@
         return state.scheduleMovementCache.get(cacheKey);
       }
       const map = new Map();
-      getScheduleSourceRecords()
+      const indexedRecords = state.scheduleRecordsByStation && state.scheduleRecordsByStation.get(stationCode);
+      const sourceRecords = indexedRecords || getScheduleSourceRecords();
+      sourceRecords
         .filter((record) => {
           const temporaryInfo = getTemporaryDispatchInfo(record);
           return !isRecordNurseUnavailable(record)
@@ -4809,14 +5125,12 @@
           targetMap.set(key, {
             isIncoming,
             isPending,
-            direction: isPending
-              ? (isIncoming ? '+1 待補' : '待派')
-              : (isIncoming ? '+1 調入' : '-1 調出'),
+            direction: isPending ? '待確認' : (isIncoming ? '+1 調入' : '-1 調出'),
             className: isIncoming ? 'movement-in' : 'movement-out',
             taskToneClass: getMovementTaskToneClass(record),
             showAssignAction: false,
             showDeleteAction: false,
-            nurseName: isPending ? '待指派' : (record.nurseName || record.nurseEmail || ''),
+            nurseName: isPending ? '' : (record.nurseName || record.nurseEmail || ''),
             recordId: record.id || '',
             recordVersion: record.version || '',
             recordStartDate,
@@ -4878,46 +5192,46 @@
     }
 
     function buildMovementPlainTextEntryHtml(group, relatedHtml) {
-      const dateText = group.recordStartDate
-        ? formatDateRange(group.recordStartDate, group.recordEndDate || group.recordStartDate)
-        : formatRangeList(group.ranges);
-      const mainText = `${dateText} ${group.direction} ${group.nurseName}`;
-      const relatedLineHtml = relatedHtml
-        ? `<div class="cell-sub">${relatedHtml}</div>`
-        : '';
       const actionHtml = buildMovementActionHtml(group);
 
       return `
         <div class="movement-entry-row">
-          <div class="movement-entry-text">
-            <div>${escapeHtml(mainText)}</div>
-            ${relatedLineHtml}
-          </div>
+          ${buildMovementEntryTextHtml(group, relatedHtml)}
           ${actionHtml}
         </div>
       `;
     }
 
     function buildMovementEntryInnerHtml(group, relatedHtml) {
-      const dateText = group.recordStartDate
-        ? formatDateRange(group.recordStartDate, group.recordEndDate || group.recordStartDate)
-        : formatRangeList(group.ranges);
-      const mainText = `${dateText} ${group.direction} ${group.nurseName}`;
-      const relatedLineHtml = relatedHtml
-        ? `<div class="cell-sub">${relatedHtml}</div>`
-        : '';
       const actionHtml = buildMovementActionHtml(group);
       return `
         <div class="${group.isIncoming ? 'movement-group-item' : ''}">
           <div class="${buildMovementTaskClassName(group)}">
             <div class="movement-entry-row">
-              <div class="movement-entry-text">
-                <div>${escapeHtml(mainText)}</div>
-                ${relatedLineHtml}
-              </div>
+              ${buildMovementEntryTextHtml(group, relatedHtml)}
               ${actionHtml}
             </div>
           </div>
+        </div>
+      `;
+    }
+
+    function buildMovementEntryTextHtml(group, relatedHtml) {
+      const dateText = group.recordStartDate
+        ? formatDateRange(group.recordStartDate, group.recordEndDate || group.recordStartDate)
+        : formatRangeList(group.ranges);
+      const personText = String(group.nurseName || '').trim();
+      const relatedLineHtml = relatedHtml
+        ? `<div class="cell-sub">${relatedHtml}</div>`
+        : '';
+      return `
+        <div class="movement-entry-text">
+          <div class="movement-entry-main">
+            <span class="movement-entry-date">${escapeHtml(dateText)}</span>
+            <span class="movement-entry-status">${escapeHtml(group.direction || '')}</span>
+            ${personText ? `<span class="movement-entry-person">${escapeHtml(personText)}</span>` : ''}
+          </div>
+          ${relatedLineHtml}
         </div>
       `;
     }
@@ -4959,15 +5273,17 @@
     }
 
     function getMovementTaskToneClass(record) {
-      const key = [
-        record && record.id,
-        record && record.assignmentKey,
-        getRecordStartDate(record),
-        getRecordEndDate(record),
-        record && record.stationCode,
-        record && record.originalStationCode
-      ].filter(Boolean).join('|');
-      return `movement-task-tone-${hashText(key) % MOVEMENT_TASK_TONE_COUNT}`;
+      const sourceStation = getMovementTaskSourceStation(record);
+      return getStationColorClass(sourceStation);
+    }
+
+    function getMovementTaskSourceStation(record) {
+      const sourceCode = String(record && (record.originalStationCode || record.stationCode) || '').trim();
+      const fallbackName = String(record && (record.originalStationName || record.stationName) || sourceCode).trim();
+      return getStationByCode(sourceCode) || {
+        code: sourceCode,
+        name: fallbackName
+      };
     }
 
     function loadScheduleYear() {
@@ -5092,7 +5408,10 @@
       const editingRecordId = el.recordId.value || '';
       el.recordsBody.innerHTML = records.map((record) => {
         const temporaryInfo = getTemporaryDispatchInfo(record);
+        const isPending = isPendingAssignmentRecord(record);
         const isEditing = Boolean(editingRecordId && record.id === editingRecordId);
+        const nurseDisplayName = getRecordNurseDisplayName(record);
+        const nurseDisplaySubtext = getRecordNurseDisplaySubtext(record);
         return `
           <tr class="${isEditing ? 'is-editing-row' : ''}">
             <td>
@@ -5103,8 +5422,8 @@
               <div class="cell-main">${escapeHtml(getRecordTargetStationDisplayName(record))}</div>
             </td>
             <td>
-              <div class="cell-main">${escapeHtml(record.nurseName || record.nurseEmail)}</div>
-              <div class="cell-sub">${escapeHtml(record.nurseEmail)}</div>
+              <div class="cell-main">${escapeHtml(nurseDisplayName)}</div>
+              ${nurseDisplaySubtext ? `<div class="cell-sub">${escapeHtml(nurseDisplaySubtext)}</div>` : ''}
             </td>
             <td>
               ${temporaryInfo.isTemporary ? '<span class="temp-badge">臨時調配</span>' : '<span class="muted">-</span>'}
@@ -5115,7 +5434,9 @@
             <td>${escapeHtml(record.note || '')}</td>
             <td>
               <div class="actions">
-                <button class="btn btn-ghost" type="button" data-edit="${escapeHtml(record.id)}" ${isEditing ? 'disabled' : ''}>${isEditing ? '修改中' : '編輯'}</button>
+                ${isPending
+                  ? `<button class="btn btn-ghost" type="button" data-assign-pending="${escapeHtml(record.id)}">指派</button>`
+                  : `<button class="btn btn-ghost" type="button" data-edit="${escapeHtml(record.id)}" ${isEditing ? 'disabled' : ''}>${isEditing ? '修改中' : '編輯'}</button>`}
                 <button class="btn btn-danger" type="button" data-delete="${escapeHtml(record.id)}">刪除</button>
               </div>
             </td>
@@ -5125,6 +5446,9 @@
 
       el.recordsBody.querySelectorAll('[data-edit]').forEach((button) => {
         button.addEventListener('click', () => editRecord(button.getAttribute('data-edit')));
+      });
+      el.recordsBody.querySelectorAll('[data-assign-pending]').forEach((button) => {
+        button.addEventListener('click', () => openPendingAssignmentModal(button.getAttribute('data-assign-pending')));
       });
       el.recordsBody.querySelectorAll('[data-delete]').forEach((button) => {
         button.addEventListener('click', () => deleteRecord(button.getAttribute('data-delete')));
@@ -5143,6 +5467,16 @@
         || (state.scheduleRecords || []).find((record) => record && record.id === id)
         || (state.currentRecords || []).find((record) => record && record.id === id)
         || null;
+    }
+
+    function getRecordNurseDisplayName(record) {
+      if (isPendingAssignmentRecord(record)) return '待確認';
+      return String(record && (record.nurseName || record.nurseEmail) || '未命名人員').trim();
+    }
+
+    function getRecordNurseDisplaySubtext(record) {
+      if (isPendingAssignmentRecord(record)) return '待指派需求';
+      return String(record && record.nurseEmail || '').trim();
     }
 
     function exportRecordsToExcel() {
@@ -5201,15 +5535,16 @@
         ['護理師', '護理師信箱', '原駐站', '徵調次數', '徵調天數', '調派目的駐站', '最近迄日', '下次可調派日']
       );
       nurseStats.forEach((stat) => {
+        const isPendingConfirmation = Boolean(stat.isPendingConfirmation);
         rows.push([
-          stat.nurseName || '',
-          stat.nurseEmail || '',
+          isPendingConfirmation ? '待確認' : (stat.nurseName || ''),
+          isPendingConfirmation ? '' : (stat.nurseEmail || ''),
           stat.originalStationName || stat.originalStationCode || '',
           formatNumber(stat.dispatchCount),
           formatNumber(stat.dispatchDays),
           stat.targetStationSummary || '',
           stat.latestEndDate || '',
-          stat.nextAllowedDate || ''
+          isPendingConfirmation ? '' : (stat.nextAllowedDate || '')
         ]);
       });
 
@@ -5227,8 +5562,8 @@
           formatAuditDateRange(log),
           log.originalStationName || log.originalStationCode || '',
           log.stationName || log.stationCode || '',
-          log.nurseName || '',
-          log.nurseEmail || '',
+          getRecordNurseDisplayName(log),
+          isPendingAssignmentRecord(log) ? '' : (log.nurseEmail || ''),
           normalizeDispatchMode(log.shiftName || ''),
           formatNumber(log.dispatchDays || 0),
           log.assignmentStatus || (log.testMode ? '測試模式' : '正式'),
@@ -5666,6 +6001,7 @@
         testMode: state.testMode,
         filters: collectFilters()
       };
+      rememberDispatchDateRange(payload.startDate, payload.endDate);
 
       state.isSaving = true;
       const actionText = isPending ? '待指派需求建立' : (payload.id ? '調派更新' : '調派建立');
@@ -5716,6 +6052,10 @@
     function editRecord(id) {
       const record = getRecordById(id);
       if (!record) return;
+      if (isPendingAssignmentRecord(record)) {
+        openPendingAssignmentModal(record.id);
+        return;
+      }
 
       el.recordId.value = record.id;
       el.recordVersion.value = record.version || '';
@@ -5747,7 +6087,7 @@
     function renderEditContext(record) {
       const temporaryInfo = getTemporaryDispatchInfo(record);
       el.editContext.classList.remove('hidden');
-      el.editContextTitle.textContent = `${formatDispatchDateRange(record)}｜${record.nurseName || record.nurseEmail}`;
+      el.editContextTitle.textContent = `${formatDispatchDateRange(record)}｜${getRecordNurseDisplayName(record)}`;
       el.editContextGrid.innerHTML = [
         buildEditContextItemHtml('原駐站', getRecordOriginalStationDisplayName(record)),
         buildEditContextItemHtml('調派駐站', getRecordTargetStationDisplayName(record)),
@@ -5780,7 +6120,7 @@
         return;
       }
       const confirmMessage = settings.confirmMessage
-        || `確定刪除 ${formatDispatchDateRange(record)} ${record.nurseName || record.nurseEmail} 的工時調派？`;
+        || `確定刪除 ${formatDispatchDateRange(record)} ${getRecordNurseDisplayName(record)} 的工時調派？`;
       const confirmed = window.confirm(confirmMessage);
       if (!confirmed) {
         const cancelMessage = settings.cancelMessage || '已取消刪除，未變更任何調派。';
@@ -5828,6 +6168,7 @@
 
     function resetForm(options) {
       const settings = options || {};
+      const rememberedRange = getRememberedDispatchDateRange();
       el.recordId.value = '';
       el.recordVersion.value = '';
       el.formTitle.textContent = '新增工時調派';
@@ -5840,8 +6181,8 @@
       el.editContextNote.textContent = '';
       el.dispatchForm.reset();
       el.dispatchTargetMode.value = 'single';
-      el.dispatchStartDate.value = getDefaultDispatchDate();
-      el.dispatchEndDate.value = el.dispatchStartDate.value;
+      el.dispatchStartDate.value = rememberedRange.startDate;
+      el.dispatchEndDate.value = rememberedRange.endDate;
       el.nurseOriginStation.value = '';
       setSelectedAssignmentKeys([]);
       const orderedStations = getOrderedStations();
@@ -5858,6 +6199,26 @@
       if (!settings.preserveStatus) {
         setStatus(settings.statusMessage || '', settings.statusType || '');
       }
+    }
+
+    function rememberDispatchDateRange(startDate, endDate) {
+      const normalizedStart = normalizeDateInput(startDate || el.dispatchStartDate.value);
+      const normalizedEnd = normalizeDateInput(endDate || el.dispatchEndDate.value) || normalizedStart;
+      if (!normalizedStart) return;
+      state.rememberedDispatchRange = {
+        startDate: normalizedStart,
+        endDate: normalizedEnd && normalizedEnd >= normalizedStart ? normalizedEnd : normalizedStart
+      };
+    }
+
+    function getRememberedDispatchDateRange() {
+      const remembered = state.rememberedDispatchRange || {};
+      const startDate = normalizeDateInput(remembered.startDate) || getDefaultDispatchDate();
+      const endDate = normalizeDateInput(remembered.endDate) || startDate;
+      return {
+        startDate,
+        endDate: endDate >= startDate ? endDate : startDate
+      };
     }
 
     function collectFilters() {
@@ -5908,7 +6269,7 @@
     }
 
     function normalizeScheduleView(value) {
-      return ['day', 'week', 'month'].includes(value) ? value : 'day';
+      return ['day', 'week', 'month'].includes(value) ? value : 'week';
     }
 
     function normalizeDateInput(value) {
@@ -6402,6 +6763,11 @@
     function setStationStatus(message, type) {
       el.stationStatus.textContent = message || '';
       el.stationStatus.className = `status${type ? ` ${type}` : ''}`;
+    }
+
+    function setDeleteStationStatus(message, type) {
+      el.deleteStationStatus.textContent = message || '';
+      el.deleteStationStatus.className = `status${type ? ` ${type}` : ''}`;
     }
 
     function formatTimeRange(record) {
