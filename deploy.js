@@ -25,6 +25,12 @@ function deployAllSheets() {
   getStationAllocationSheet_(true);
   created.push(getEnvString_('DISPATCH_STATION_ALLOCATION_SHEET_NAME', APP_CONFIG.stationAllocationSheetName));
 
+  // 預約紀錄（可見欄位式 upsert 表；正式與測試各一）。
+  getReservationSheet_(true, { testMode: false });
+  created.push(getEnvString_('DISPATCH_RESERVATION_SHEET_NAME', APP_CONFIG.reservationSheetName));
+  getReservationSheet_(true, { testMode: true });
+  created.push(getEnvString_('DISPATCH_TEST_RESERVATION_SHEET_NAME', APP_CONFIG.testReservationSheetName));
+
   // 當年度的調派紀錄／操作紀錄（隱藏年度 JSON 表；後續年份會在首次寫入時自動建立）。
   const year = Number(getTodayDateString_().slice(0, 4));
   getAnnualJsonStoreSheet_(APP_CONFIG.recordSheetPrefix, year, true);
@@ -61,6 +67,8 @@ function deployVerify() {
     const expected = [
       getEnvString_('DISPATCH_MOBILE_STATION_SHEET_NAME', APP_CONFIG.mobileStationSheetName),
       getEnvString_('DISPATCH_STATION_ALLOCATION_SHEET_NAME', APP_CONFIG.stationAllocationSheetName),
+      getEnvString_('DISPATCH_RESERVATION_SHEET_NAME', APP_CONFIG.reservationSheetName),
+      getEnvString_('DISPATCH_TEST_RESERVATION_SHEET_NAME', APP_CONFIG.testReservationSheetName),
       `${APP_CONFIG.recordSheetPrefix}${year}`,
       `${APP_CONFIG.auditLogSheetPrefix}${year}`
     ];

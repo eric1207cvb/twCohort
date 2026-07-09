@@ -51,7 +51,16 @@ const APP_CONFIG = {
   fullShiftBreakHours: 1,
   fullShiftBreakThresholdHours: 8,
   unavailableStatusKeywords: ['育嬰', '留停', '留職停薪', '停薪', '留職', '停職', '休職'],
-  shiftOptions: ['正常班', '行動收案']
+  shiftOptions: ['正常班', '行動收案'],
+  // 預約駐站：可見欄位式工作表（正式／測試）與快取鍵。
+  reservationSheetName: '預約紀錄',
+  testReservationSheetName: '測試預約紀錄',
+  reservationsCacheKey: 'stationNurseReservations:records:v1',
+  testReservationsCacheKey: 'stationNurseReservations:records:test:v1',
+  // 「至少 2 人且 1 人具護理師/醫檢師執照」的組成規則；執照關鍵字比對人員職務配置 H 欄「相關執照」。
+  licensedLicenseKeywords: ['護理師', '醫檢師', '醫事檢驗師', '護理', '醫檢'],
+  reservationMinHeadcount: 2,
+  reservationMinLicensedCount: 1
 };
 
 let officialHolidayDatasetRowsCache_ = null;
@@ -66,6 +75,14 @@ const MOBILE_STATION_SHEET_HEADERS_ = ['行動駐站代號', '駐站中文名稱
 // 駐站調配工作表表頭（以「資料ID」= assignmentKey 為主鍵 upsert，取代原本寫回人員職務配置的「臨時調配」欄）。
 const STATION_ALLOCATION_SHEET_HEADERS_ = ['資料ID', '信箱', '姓名', '基底駐站代號', '臨調摘要', '更新時間'];
 
+// 預約紀錄工作表表頭（可見欄位式，以 A 欄「預約ID」= UUID 為主鍵 upsert）。
+// 「階段狀態」為三步驟進度、「狀態」為生命週期（有效/已取消），兩者分離（比照 record.assignmentStatus vs record.status）。
+const RESERVATION_SHEET_HEADERS_ = [
+  '預約ID', '階段狀態', '來源駐站代號', '來源駐站名稱', '目的駐站代號', '目的駐站名稱',
+  '支援起日', '支援迄日', '班別', '需求人數', '已指派人數', '已指派人員摘要',
+  '已指派調派ID', '執照警告', '版本', '狀態', '建立者', '建立時間', '更新者', '更新時間', '備註'
+];
+
 const FIELD_ALIASES = {
   email: ['信箱', '電子信箱', '電子郵件', 'Email', 'email', '使用者信箱', '帳號'],
   name: ['姓名', '人員姓名', '名稱', 'name'],
@@ -76,6 +93,7 @@ const FIELD_ALIASES = {
   managerEmail: ['主管信箱', '管理員信箱', '駐站管理員信箱', 'managerEmail'],
   managerName: ['主管姓名', '管理員姓名', '駐站管理員姓名', 'managerName'],
   temporaryDispatch: ['臨時調配', '臨調', 'temporaryDispatch'],
+  license: ['相關執照', '執照', '證照', '相關證照', 'license'],
   orgType: ['類型', '組織類型', 'type'],
   level: ['層級', 'level'],
   alias: ['簡稱', '別名', 'alias'],
@@ -264,14 +282,32 @@ function getDispatchAppData(payload) {
     });
     const holidayCalendar = loadOfficialHolidayCalendarForRange_(filters.dateFrom, filters.dateTo);
 
+    // 預約需求投影：把「已設定人數且尚有缺額」的預約當成待指派偽紀錄餵給月曆（不落盤）。
+    const reservations = reconcileReservations_(readStoredReservations_(context), getStoredDispatchRecords_(context));
+    const recordsWithReservations = records.concat(buildReservationDemandProjections_(reservations, {
+      allowedStationCodes, filters, includeOriginalStation: false
+    }));
+    const scheduleWithReservations = scheduleRecords.concat(buildReservationDemandProjections_(reservations, {
+      allowedStationCodes, filters: { ...filters, stationCode: '', nurseEmail: '' }, includeOriginalStation: true
+    }));
+    const currentWithReservations = currentRecords.concat(buildReservationDemandProjections_(reservations, {
+      allowedStationCodes, filters: { dateFrom: today, dateTo: today, stationCode: '', nurseEmail: '' }, includeOriginalStation: true
+    }));
+    const allowedStationSet = new Set(context.stations.map((station) => station.code));
+    const visibleReservations = reservations
+      .filter((reservation) => reservation.status === '有效')
+      .filter((reservation) => allowedStationSet.has(reservation.stationCode) || allowedStationSet.has(reservation.originalStationCode))
+      .sort(compareReservations_);
+
     return {
       success: true,
       viewer: context.viewer,
       stations: context.stations,
       nurses: context.nurses,
-      records,
-      scheduleRecords,
-      currentRecords,
+      records: recordsWithReservations,
+      scheduleRecords: scheduleWithReservations,
+      currentRecords: currentWithReservations,
+      reservations: visibleReservations,
       holidays: holidayCalendar.holidays,
       holidaySource: holidayCalendar.source,
       filters,
@@ -292,6 +328,7 @@ function getDispatchAppData(payload) {
       records: [],
       scheduleRecords: [],
       currentRecords: [],
+      reservations: [],
       holidays: {},
       holidaySource: buildOfficialHolidaySourceInfo_({ available: false }),
       filters: normalizeDispatchFilters_(payload),
@@ -325,7 +362,7 @@ function getDispatchFairnessStats(payload) {
     const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
     // 每位人員的「基底駐站集合」（人員職務配置中所有駐站代號）；用於排除基底站之間互調，不計入每月調派計次。
     const baseStationsByEmail = buildBaseStationsByEmail_(source.assignments);
-    const records = loadDispatchRecords_(allowedStationCodes, {
+    const baseRecords = loadDispatchRecords_(allowedStationCodes, {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       stationCode: '',
@@ -334,7 +371,17 @@ function getDispatchFairnessStats(payload) {
       testMode: context.viewer.testMode,
       includeOriginalStation: true,
       assignmentAvailabilityByKey
-    })
+    });
+    // 預約需求投影：未指派缺額以「待確認」形式計入年度統計（比照原待指派行為）。
+    const reservationProjections = filters.nurseEmail ? [] : buildReservationDemandProjections_(
+      reconcileReservations_(readStoredReservations_(context), getStoredDispatchRecords_(context)),
+      {
+        allowedStationCodes,
+        filters: { dateFrom: filters.dateFrom, dateTo: filters.dateTo, stationCode: '', nurseEmail: '' },
+        includeOriginalStation: true
+      }
+    );
+    const records = baseRecords.concat(reservationProjections)
       .filter((record) => isTemporaryDispatchRecord_(record))
       .filter((record) => isPendingAssignmentRecord_(record) || isCountableDispatchRecord_(record, baseStationsByEmail))
       .filter((record) => !filters.stationCode || record.stationCode === filters.stationCode || record.originalStationCode === filters.stationCode)
@@ -857,6 +904,832 @@ function assignPendingWorkHourDispatch(payload) {
   } finally {
     if (hasLock) lock.releaseLock();
   }
+}
+
+// ==================== 預約駐站（Reservation）資料層與驗證 ====================
+// 三步驟預約：①設定來源A→目的B與期間 ②決定人數 ③指定人員（分次進行、依序完成）。
+// 儲存於可寫資料表（DISPATCH_DATA_SHEET_ID）的可見工作表「預約紀錄」/「測試預約紀錄」，不使用 Script Properties。
+// 「人員何時在哪個駐站」的唯一真相仍是年度調派紀錄；預約列僅保存意圖與進度快照（以 reservationId 回連調派紀錄）。
+
+function getReservationSheet_(createIfMissing, options) {
+  const testMode = isTestDispatchRecordStore_(options);
+  const sheetName = testMode
+    ? getEnvString_('DISPATCH_TEST_RESERVATION_SHEET_NAME', APP_CONFIG.testReservationSheetName)
+    : getEnvString_('DISPATCH_RESERVATION_SHEET_NAME', APP_CONFIG.reservationSheetName);
+  return ensureDataSheetWithHeaders_(sheetName, RESERVATION_SHEET_HEADERS_, createIfMissing);
+}
+
+function getReservationCacheKey_(options) {
+  return isTestDispatchRecordStore_(options)
+    ? APP_CONFIG.testReservationsCacheKey
+    : APP_CONFIG.reservationsCacheKey;
+}
+
+function invalidateReservationsCache_() {
+  removeCachedValue_(APP_CONFIG.reservationsCacheKey);
+  removeCachedValue_(APP_CONFIG.testReservationsCacheKey);
+}
+
+function parseJsonArrayField_(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+// 預約紀錄工作表列 → 記憶體物件（欄位順序須與 RESERVATION_SHEET_HEADERS_ 對齊）。
+function rowToReservation_(row) {
+  const id = String(row[0] || '').trim();
+  if (!id) return null;
+  const demandRaw = String(row[9] || '').trim();
+  const demandCount = demandRaw === '' ? null : Math.max(0, Number(demandRaw) || 0);
+  return {
+    id,
+    originalStationCode: normalizeOrgCode_(row[2]),
+    originalStationName: String(row[3] || '').trim(),
+    stationCode: normalizeOrgCode_(row[4]),
+    stationName: String(row[5] || '').trim(),
+    startDate: String(row[6] || '').trim(),
+    endDate: String(row[7] || '').trim(),
+    shiftName: normalizeDispatchMode_(row[8] || APP_CONFIG.shiftOptions[0]),
+    demandCount,
+    assignedCount: Math.max(0, Number(row[10] || 0) || 0),
+    assignedSummary: String(row[11] || '').trim(),
+    assignedDispatchIds: parseJsonArrayField_(row[12]),
+    licenseWarnings: parseJsonArrayField_(row[13]),
+    version: String(row[14] || '').trim(),
+    status: String(row[15] || '有效').trim() || '有效',
+    createdBy: normalizeEmail_(row[16]),
+    createdAt: String(row[17] || '').trim(),
+    updatedBy: normalizeEmail_(row[18]),
+    updatedAt: String(row[19] || '').trim(),
+    note: String(row[20] || '').trim()
+  };
+}
+
+function reservationToRow_(reservation) {
+  const stage = computeReservationStage_(reservation);
+  return [
+    reservation.id,
+    reservationStageLabel_(stage),
+    reservation.originalStationCode || '',
+    reservation.originalStationName || '',
+    reservation.stationCode || '',
+    reservation.stationName || '',
+    reservation.startDate || '',
+    reservation.endDate || '',
+    reservation.shiftName || APP_CONFIG.shiftOptions[0],
+    reservation.demandCount == null ? '' : Number(reservation.demandCount),
+    Number(reservation.assignedCount || 0),
+    reservation.assignedSummary || '',
+    JSON.stringify(reservation.assignedDispatchIds || []),
+    JSON.stringify(reservation.licenseWarnings || []),
+    reservation.version || '',
+    reservation.status || '有效',
+    reservation.createdBy || '',
+    reservation.createdAt || '',
+    reservation.updatedBy || '',
+    reservation.updatedAt || '',
+    reservation.note || ''
+  ];
+}
+
+// 三步驟進度推導：無人數→已設定路線；有人數未指派→已設定人數；指派未滿→指派中；指派已滿→已完成。
+function computeReservationStage_(reservation) {
+  if (reservation && reservation.status && reservation.status !== '有效') return 'cancelled';
+  const demand = reservation && reservation.demandCount;
+  if (demand == null || Number(demand) <= 0) return 'route-set';
+  const assigned = Math.max(0, Number(reservation && reservation.assignedCount || 0));
+  if (assigned <= 0) return 'count-set';
+  if (assigned < Number(demand)) return 'assigning';
+  return 'completed';
+}
+
+function reservationStageLabel_(stage) {
+  return {
+    'route-set': '已設定路線',
+    'count-set': '已設定人數',
+    'assigning': '指派中',
+    'completed': '已完成',
+    'cancelled': '已取消'
+  }[stage] || '已設定路線';
+}
+
+// 讀取預約列（含 45 秒快取）；回傳原始快照，不做進度校正（reconcile 由呼叫端在載入調派紀錄後執行）。
+function readStoredReservations_(context) {
+  const cacheKey = getReservationCacheKey_(context);
+  const cached = getCachedJson_(cacheKey);
+  if (Array.isArray(cached)) return cached;
+
+  const sheet = getReservationSheet_(false, context);
+  const reservations = [];
+  if (sheet) {
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, RESERVATION_SHEET_HEADERS_.length)
+        .getDisplayValues()
+        .forEach((row) => {
+          const reservation = rowToReservation_(row);
+          if (reservation) reservations.push(reservation);
+        });
+    }
+  }
+  putCachedJson_(cacheKey, reservations, APP_CONFIG.recordsCacheSeconds);
+  return reservations;
+}
+
+// 單列 upsert（A 欄「預約ID」為主鍵）；比照 upsertStationAllocationRows_ 的 idToRow 模式。
+function saveStoredReservation_(reservation, context) {
+  const sheet = getReservationSheet_(true, context);
+  if (!sheet) throw new Error('無法開啟預約紀錄工作表。');
+
+  const lastRow = sheet.getLastRow();
+  let targetRow = 0;
+  if (lastRow > 1) {
+    const ids = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === reservation.id) {
+        targetRow = i + 2;
+        break;
+      }
+    }
+  }
+  if (!targetRow) targetRow = sheet.getLastRow() + 1;
+
+  sheet.getRange(targetRow, 1, 1, RESERVATION_SHEET_HEADERS_.length).setValues([reservationToRow_(reservation)]);
+  SpreadsheetApp.flush();
+  invalidateReservationsCache_();
+}
+
+// 進度校正：以仍「有效」的調派紀錄重算 assignedCount/摘要/階段（調派被刪 → 進度自動退回）。
+function reconcileReservations_(reservations, storedRecords) {
+  const active = normalizeActiveStoredDispatchRecords_(storedRecords);
+  const activeIds = new Set(active.map((record) => record.id));
+  const nameById = new Map(active.map((record) => [record.id, record.nurseName || record.nurseEmail || '']));
+
+  return (Array.isArray(reservations) ? reservations : []).map((reservation) => {
+    if (!reservation) return reservation;
+    const ids = (reservation.assignedDispatchIds || []).filter((id) => activeIds.has(id));
+    const assignedCount = ids.length;
+    const assignedSummary = ids.map((id) => nameById.get(id)).filter(Boolean).join('、');
+    const reconciled = { ...reservation, assignedDispatchIds: ids, assignedCount, assignedSummary };
+    const stage = computeReservationStage_(reconciled);
+    reconciled.stage = stage;
+    reconciled.stageLabel = reservationStageLabel_(stage);
+    return reconciled;
+  });
+}
+
+// 步驟①②共用正規化：日期、來源≠目的、駐站存在性與權限、人數門檻（可留空、不得小於已指派）。
+function normalizeReservationPayload_(payload, source, context, viewerEmail, existing) {
+  if (!payload || typeof payload !== 'object') throw new Error('預約資料格式錯誤。');
+
+  const startDate = normalizeDate_(payload.startDate, '支援起日');
+  const endDate = normalizeDate_(payload.endDate || payload.startDate, '支援迄日');
+  if (endDate < startDate) throw new Error('支援迄日不可早於支援起日。');
+
+  const stationCode = normalizeOrgCode_(payload.stationCode);
+  const station = context.stations.find((item) => item.code === stationCode);
+  if (!station) throw new Error('請選擇有效的目的駐站。');
+  const originalStationCode = normalizeOrgCode_(payload.originalStationCode || payload.sourceStationCode);
+  const originalStation = findSourceStationByCode_(source, originalStationCode);
+  if (!originalStation) throw new Error('請選擇有效的來源駐站。');
+  if (originalStation.code === station.code) throw new Error('預約需選擇不同的來源駐站與目的駐站。');
+  assertCanManageRelatedStation_(context, station.code, originalStation.code, '建立或修改此預約');
+
+  const shiftName = normalizeDispatchMode_(payload.shiftName || APP_CONFIG.shiftOptions[0]);
+  if (isMobileCaseDispatch_(shiftName)) assertSundayToThursdayDispatchDateRange_(startDate, endDate, '行動收案');
+  if (isExternalStation_(station)) assertSundayToThursdayDispatchDateRange_(startDate, endDate, '委外駐站');
+
+  const note = normalizeShortText_(payload.note || '', '備註', 300);
+
+  const assignedCount = existing ? Math.max(0, Number(existing.assignedCount || 0)) : 0;
+  let demandCount = existing && existing.demandCount != null ? existing.demandCount : null;
+  const demandRaw = payload.demandCount;
+  if (demandRaw !== undefined && demandRaw !== null && String(demandRaw).trim() !== '') {
+    demandCount = Math.floor(Number(demandRaw));
+    if (!Number.isInteger(demandCount) || demandCount < 1) throw new Error('調派人數需為 1 以上的整數。');
+    if (demandCount < assignedCount) throw new Error(`調派人數不可小於已指派人數（已指派 ${assignedCount} 人）。`);
+  }
+
+  return {
+    originalStationCode: originalStation.code,
+    originalStationName: originalStation.name || originalStation.code,
+    stationCode: station.code,
+    stationName: station.name || station.code,
+    startDate,
+    endDate,
+    shiftName,
+    demandCount,
+    note
+  };
+}
+
+function assertNoDuplicateReservation_(target, reservations, excludeId) {
+  const duplicate = (Array.isArray(reservations) ? reservations : [])
+    .filter((reservation) => (
+      reservation
+      && reservation.status === '有效'
+      && reservation.id !== excludeId
+      && reservation.originalStationCode === target.originalStationCode
+      && reservation.stationCode === target.stationCode
+      && reservation.shiftName === target.shiftName
+      && dateRangesOverlap_(reservation.startDate, reservation.endDate, target.startDate, target.endDate)
+    ))[0];
+  if (!duplicate) return;
+  throw new Error('已有相同來源、目的與重疊期間的預約，請直接續填該筆或調整期間。');
+}
+
+function assertReservationVersion_(reservation, payload, actionLabel) {
+  const expected = String(payload && payload.recordVersion || '').trim();
+  if (!expected) throw new Error(`請先重新整理預約清單再${actionLabel || '操作'}。`);
+  if (expected !== String(reservation.version || '').trim()) {
+    throw new Error(`這筆預約已被其他人更新，請重新整理預約清單後再${actionLabel || '操作'}。`);
+  }
+}
+
+function compareReservations_(a, b) {
+  const startCompare = String(a && a.startDate || '').localeCompare(String(b && b.startDate || ''));
+  if (startCompare !== 0) return startCompare;
+  return String(b && b.createdAt || '').localeCompare(String(a && a.createdAt || ''));
+}
+
+// 回傳目前使用者可見（目的或來源駐站在其管理範圍內）且仍有效的預約清單，並套用進度校正。
+function listReservationsForResponse_(context, source) {
+  const reservations = reconcileReservations_(readStoredReservations_(context), getStoredDispatchRecords_(context));
+  const allowed = new Set(context.stations.map((station) => station.code));
+  return reservations
+    .filter((reservation) => reservation.status === '有效')
+    .filter((reservation) => allowed.has(reservation.stationCode) || allowed.has(reservation.originalStationCode))
+    .sort(compareReservations_);
+}
+
+// 把「已設定人數且尚有缺額」的預約投影成與 pending 同形狀的唯讀偽紀錄，餵給月曆與年度統計（不落盤）。
+function buildReservationPendingProjection_(reservation, remaining) {
+  const dispatchDays = countDateRangeDays_(reservation.startDate, reservation.endDate);
+  return {
+    id: `reservation:${reservation.id}`,
+    reservationId: reservation.id,
+    isReservationProjection: true,
+    version: reservation.version || '',
+    workDate: reservation.startDate,
+    startDate: reservation.startDate,
+    endDate: reservation.endDate,
+    stationCode: reservation.stationCode,
+    stationName: reservation.stationName || reservation.stationCode,
+    assignmentKey: '',
+    nurseEmail: '',
+    nurseName: APP_CONFIG.pendingDispatchNurseName,
+    nurseTitle: '',
+    originalStationCode: reservation.originalStationCode,
+    originalStationName: reservation.originalStationName || reservation.originalStationCode,
+    temporaryDispatchLabel: '臨時調配',
+    assignmentStatus: APP_CONFIG.pendingAssignmentStatus,
+    demandCount: remaining,
+    dispatchDays,
+    dispatchTotalHours: 0,
+    shiftName: reservation.shiftName || APP_CONFIG.shiftOptions[0],
+    startTime: '',
+    endTime: '',
+    hours: 0,
+    note: reservation.note || '',
+    status: '有效'
+  };
+}
+
+function buildReservationDemandProjections_(reservations, options) {
+  const opts = options || {};
+  const allowed = opts.allowedStationCodes;
+  const filters = opts.filters || {};
+  const includeOriginalStation = Boolean(opts.includeOriginalStation);
+  const projections = [];
+  (Array.isArray(reservations) ? reservations : []).forEach((reservation) => {
+    if (!reservation || reservation.status !== '有效') return;
+    if (reservation.demandCount == null) return;
+    const remaining = Math.max(0, Number(reservation.demandCount) - Math.max(0, Number(reservation.assignedCount || 0)));
+    if (remaining <= 0) return;
+    // 偽紀錄沒有指定人選，若前端正以特定護理師過濾則不投影（比照 pending 的 nurseEmail 過濾行為）。
+    if (filters.nurseEmail) return;
+    if (allowed) {
+      const allowedTarget = allowed.has(reservation.stationCode);
+      const allowedOriginal = includeOriginalStation && allowed.has(reservation.originalStationCode);
+      if (!allowedTarget && !allowedOriginal) return;
+    }
+    if (filters.stationCode && reservation.stationCode !== filters.stationCode) return;
+    if (filters.dateFrom && reservation.endDate < filters.dateFrom) return;
+    if (filters.dateTo && reservation.startDate > filters.dateTo) return;
+    projections.push(buildReservationPendingProjection_(reservation, remaining));
+  });
+  return projections;
+}
+
+// 步驟①建立／①②更新：無 id 新建，有 id 走版本檢查後 upsert。
+function saveStationReservation(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) throw new Error('無法辨識目前登入帳號。');
+    acquireDispatchWriteLock_(lock);
+    hasLock = true;
+
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: resolvePayloadTestMode_(payload)
+    });
+    const reservations = readStoredReservations_(context);
+    const id = String(payload && payload.id || '').trim();
+
+    let existing = null;
+    if (id) {
+      existing = reservations.find((item) => item.id === id) || null;
+      if (!existing) throw new Error('找不到要修改的預約，請重新整理預約清單。');
+      if (existing.status !== '有效') throw new Error('這筆預約已取消，無法修改。');
+      assertReservationVersion_(existing, payload, '修改');
+    }
+
+    const normalized = normalizeReservationPayload_(payload, source, context, viewerEmail, existing);
+    assertNoDuplicateReservation_(normalized, reservations, id);
+
+    const now = formatTimestamp_(new Date());
+    const reservation = existing ? {
+      ...existing,
+      ...normalized,
+      version: createDispatchRecordVersion_(),
+      updatedAt: now,
+      updatedBy: viewerEmail
+    } : {
+      ...normalized,
+      id: Utilities.getUuid(),
+      assignedCount: 0,
+      assignedSummary: '',
+      assignedDispatchIds: [],
+      licenseWarnings: [],
+      version: createDispatchRecordVersion_(),
+      status: '有效',
+      createdAt: now,
+      createdBy: viewerEmail,
+      updatedAt: now,
+      updatedBy: viewerEmail
+    };
+
+    saveStoredReservation_(reservation, context);
+    appendDispatchAuditLogs_([
+      buildDispatchAuditLog_(existing ? 'update-reservation' : 'create-reservation', reservation, {
+        context,
+        source,
+        viewerEmail,
+        occurredAt: now
+      })
+    ], context);
+    lock.releaseLock();
+    hasLock = false;
+
+    const reconciled = reconcileReservations_([reservation], getStoredDispatchRecords_(context))[0];
+    return {
+      success: true,
+      reservation: reconciled,
+      reservations: listReservationsForResponse_(context, source)
+    };
+  } catch (error) {
+    console.error('儲存預約駐站失敗:', error);
+    return { success: false, message: error && error.message ? error.message : '無法儲存預約駐站。' };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+// 唯讀清單（預約精靈首頁用）。預設隱藏已完成的預約，可用 includeCompleted 顯示。
+function getStationReservations(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+
+  try {
+    if (!viewerEmail) throw new Error('無法辨識目前登入帳號。');
+    const source = loadDispatchSource_();
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: resolvePayloadTestMode_(payload)
+    });
+    let list = listReservationsForResponse_(context, source);
+    const stationCode = normalizeOrgCode_(payload && payload.stationCode);
+    if (stationCode) {
+      list = list.filter((reservation) => reservation.stationCode === stationCode || reservation.originalStationCode === stationCode);
+    }
+    if (!(payload && payload.includeCompleted)) {
+      list = list.filter((reservation) => reservation.stage !== 'completed');
+    }
+    return { success: true, reservations: list };
+  } catch (error) {
+    console.error('讀取預約駐站清單失敗:', error);
+    return { success: false, message: error && error.message ? error.message : '無法讀取預約駐站清單。', reservations: [] };
+  }
+}
+
+// 軟取消（狀態＝已取消）。不動已建立的正式調派，僅提示需在月曆逐筆刪除。
+function deleteStationReservation(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) throw new Error('無法辨識目前登入帳號。');
+    acquireDispatchWriteLock_(lock);
+    hasLock = true;
+
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('缺少預約 ID。');
+
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: resolvePayloadTestMode_(payload)
+    });
+    const reservations = readStoredReservations_(context);
+    const existing = reservations.find((item) => item.id === id);
+    if (!existing) throw new Error('找不到要取消的預約，請重新整理預約清單。');
+    assertCanManageRelatedStation_(context, existing.stationCode, existing.originalStationCode, '取消此預約');
+
+    if (existing.status !== '有效') {
+      lock.releaseLock();
+      hasLock = false;
+      return { success: true, message: '這筆預約已是取消狀態。', reservations: listReservationsForResponse_(context, source) };
+    }
+    assertReservationVersion_(existing, payload, '取消');
+
+    const now = formatTimestamp_(new Date());
+    const cancelled = {
+      ...existing,
+      status: '已取消',
+      version: createDispatchRecordVersion_(),
+      updatedAt: now,
+      updatedBy: viewerEmail
+    };
+    saveStoredReservation_(cancelled, context);
+    appendDispatchAuditLogs_([
+      buildDispatchAuditLog_('delete-reservation', cancelled, { context, source, viewerEmail, occurredAt: now })
+    ], context);
+    lock.releaseLock();
+    hasLock = false;
+
+    const reconciledExisting = reconcileReservations_([existing], getStoredDispatchRecords_(context))[0];
+    const message = reconciledExisting && reconciledExisting.assignedCount > 0
+      ? '預約已取消。已建立的調派仍保留，如需移除請至月曆逐筆刪除。'
+      : '預約已取消。';
+    return { success: true, message, reservations: listReservationsForResponse_(context, source) };
+  } catch (error) {
+    console.error('取消預約駐站失敗:', error);
+    return { success: false, message: error && error.message ? error.message : '無法取消預約駐站。' };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+// 反查支援駐站：輸入目的駐站 B，列出哪些駐站、什麼期間會來支援（未取消預約各階段＋已確認臨調）。
+function getStationSupportLookup(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+
+  try {
+    if (!viewerEmail) throw new Error('無法辨識目前登入帳號。');
+    const stationCode = normalizeOrgCode_(payload && payload.stationCode);
+    if (!stationCode) throw new Error('請選擇要反查的目的駐站。');
+
+    const source = loadDispatchSource_();
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: resolvePayloadTestMode_(payload)
+    });
+    const allowed = new Set(context.stations.map((station) => station.code));
+    if (!allowed.has(stationCode)) throw new Error('您沒有檢視此駐站的權限。');
+    const targetStation = context.stations.find((station) => station.code === stationCode) || {};
+
+    const today = getTodayDateString_();
+    const dateFrom = /^\d{4}-\d{2}-\d{2}$/.test(String(payload && payload.dateFrom || '')) ? payload.dateFrom : today;
+    const dateTo = /^\d{4}-\d{2}-\d{2}$/.test(String(payload && payload.dateTo || '')) ? payload.dateTo : addDays_(today, APP_CONFIG.defaultRangeDays - 1);
+
+    const rows = [];
+
+    // (a) 目的＝B 的未取消預約（含各階段）。
+    reconcileReservations_(readStoredReservations_(context), getStoredDispatchRecords_(context))
+      .filter((reservation) => reservation.status === '有效' && reservation.stationCode === stationCode)
+      .filter((reservation) => dateRangesOverlap_(reservation.startDate, reservation.endDate, dateFrom, dateTo))
+      .forEach((reservation) => {
+        rows.push({
+          sourceType: 'reservation',
+          originalStationCode: reservation.originalStationCode,
+          originalStationName: reservation.originalStationName || reservation.originalStationCode,
+          startDate: reservation.startDate,
+          endDate: reservation.endDate,
+          shiftName: reservation.shiftName,
+          stageLabel: reservation.stageLabel || reservationStageLabel_(reservation.stage),
+          demandCount: reservation.demandCount == null ? null : Number(reservation.demandCount),
+          assignedCount: Number(reservation.assignedCount || 0),
+          people: reservation.assignedSummary ? reservation.assignedSummary.split('、').filter(Boolean) : []
+        });
+      });
+
+    // (b) 期間內調入 B 的已確認臨調（非待指派）。
+    const assignmentAvailabilityByKey = buildAssignmentAvailabilityByKey_(source.assignments);
+    loadDispatchRecords_(allowed, { dateFrom, dateTo, stationCode: '', nurseEmail: '' }, {
+      testMode: context.viewer.testMode,
+      includeOriginalStation: true,
+      assignmentAvailabilityByKey
+    })
+      .filter((record) => record.stationCode === stationCode && isTemporaryDispatchRecord_(record) && !isPendingAssignmentRecord_(record))
+      .forEach((record) => {
+        rows.push({
+          sourceType: 'dispatch',
+          originalStationCode: record.originalStationCode,
+          originalStationName: record.originalStationName || record.originalStationCode,
+          startDate: record.startDate,
+          endDate: record.endDate,
+          shiftName: record.shiftName,
+          stageLabel: '已確認調派',
+          demandCount: null,
+          assignedCount: 1,
+          people: [record.nurseName || record.nurseEmail].filter(Boolean)
+        });
+      });
+
+    rows.sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || ''))
+      || String(a.originalStationName || '').localeCompare(String(b.originalStationName || ''), 'zh-Hant'));
+
+    return {
+      success: true,
+      stationCode,
+      stationName: targetStation.name || stationCode,
+      dateFrom,
+      dateTo,
+      rows
+    };
+  } catch (error) {
+    console.error('反查支援駐站失敗:', error);
+    return { success: false, message: error && error.message ? error.message : '無法反查支援駐站。', rows: [] };
+  }
+}
+
+// 由預約與來源人員配置組出一筆標準臨時調派紀錄（含 reservationId 回連）。
+function buildReservationDispatchRecord_(reservation, assignment, viewerEmail, now) {
+  const dispatchDays = countDateRangeDays_(reservation.startDate, reservation.endDate);
+  return {
+    id: Utilities.getUuid(),
+    version: createDispatchRecordVersion_(),
+    workDate: reservation.startDate,
+    startDate: reservation.startDate,
+    endDate: reservation.endDate,
+    stationCode: reservation.stationCode,
+    stationName: reservation.stationName || reservation.stationCode,
+    assignmentKey: assignment.assignmentKey,
+    nurseEmail: assignment.email,
+    nurseName: assignment.name || assignment.email,
+    nurseTitle: assignment.title || '',
+    originalStationCode: reservation.originalStationCode,
+    originalStationName: reservation.originalStationName || reservation.originalStationCode,
+    temporaryDispatchLabel: '臨時調配',
+    assignmentStatus: '',
+    demandCount: 1,
+    dispatchDays,
+    dispatchTotalHours: 0,
+    shiftName: reservation.shiftName || APP_CONFIG.shiftOptions[0],
+    startTime: '',
+    endTime: '',
+    hours: 0,
+    note: reservation.note || '',
+    reservationId: reservation.id,
+    createdAt: now,
+    createdBy: viewerEmail,
+    updatedAt: now,
+    updatedBy: viewerEmail,
+    status: '有效'
+  };
+}
+
+// 逐日檢查目的站組成是否滿足「至少 2 人且至少 1 人具護理師/醫檢師執照」，回傳警告（不阻擋，交由前端確認）。
+// 逐日在站者＝目的站基底收案人員（扣當日調出）＋當日調入（含本次擬指派者）。期間過長時以 defaultRangeDays 為軟上限。
+function buildReservationLicenseWarnings_(source, context, reservation, newAssignments, storedRecords) {
+  const destCode = normalizeOrgCode_(reservation.stationCode);
+  const station = context.stations.find((item) => item.code === destCode) || {};
+  const baseMembers = Array.isArray(station.members) ? station.members : [];
+  const licensedByKey = new Map((source && source.assignments || [])
+    .map((assignment) => [assignment.assignmentKey, isLicensedNurseOrMedTech_(assignment)]));
+
+  const activeTemporary = normalizeActiveStoredDispatchRecords_(storedRecords)
+    .filter((record) => isTemporaryDispatchRecord_(record) && !isPendingAssignmentRecord_(record) && !record.isNurseUnavailable);
+
+  const warnings = [];
+  const cap = APP_CONFIG.defaultRangeDays;
+  let cursor = reservation.startDate;
+  let dayCount = 0;
+  let capped = false;
+
+  while (cursor <= reservation.endDate) {
+    if (dayCount >= cap) { capped = true; break; }
+
+    const present = new Map();
+    baseMembers.forEach((member) => present.set(member.assignmentKey, Boolean(member.isLicensed)));
+    activeTemporary
+      .filter((record) => record.startDate <= cursor && record.endDate >= cursor)
+      .forEach((record) => {
+        if (record.originalStationCode === destCode) present.delete(record.assignmentKey);
+        if (record.stationCode === destCode) {
+          present.set(record.assignmentKey, licensedByKey.has(record.assignmentKey) ? Boolean(licensedByKey.get(record.assignmentKey)) : false);
+        }
+      });
+    newAssignments
+      .filter((assignment) => assignment.startDate <= cursor && assignment.endDate >= cursor)
+      .forEach((assignment) => present.set(assignment.assignmentKey, Boolean(assignment.isLicensed)));
+
+    const headcount = present.size;
+    let licensedCount = 0;
+    present.forEach((isLicensed) => { if (isLicensed) licensedCount++; });
+    if (headcount < APP_CONFIG.reservationMinHeadcount || licensedCount < APP_CONFIG.reservationMinLicensedCount) {
+      warnings.push({
+        date: cursor,
+        headcount,
+        licensedCount,
+        message: `${cursor}：在站 ${headcount} 人、具護理師/醫檢師執照 ${licensedCount} 人`
+      });
+    }
+    cursor = addDays_(cursor, 1);
+    dayCount++;
+  }
+
+  return { warnings, capped };
+}
+
+// 步驟③指派人員：可一次指定多人（≤ 剩餘缺額），逐人建標準調派紀錄並更新預約進度。
+function assignStationReservation(payload) {
+  const viewerEmail = normalizeEmail_(getCurrentUserEmail());
+  const lock = LockService.getScriptLock();
+  let hasLock = false;
+
+  try {
+    if (!viewerEmail) throw new Error('無法辨識目前登入帳號。');
+    acquireDispatchWriteLock_(lock);
+    hasLock = true;
+
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('缺少預約 ID。');
+    const uniqueKeys = Array.from(new Set(
+      (Array.isArray(payload && payload.assignmentKeys) ? payload.assignmentKeys : [])
+        .map((key) => String(key || '').trim())
+        .filter(Boolean)
+    ));
+    if (!uniqueKeys.length) throw new Error('請選擇要指派的人員。');
+
+    const source = loadDispatchSource_({ includeSheets: true, forceFresh: true });
+    const context = buildDispatchContext_(source, viewerEmail, {
+      testMode: resolvePayloadTestMode_(payload)
+    });
+    const reservations = readStoredReservations_(context);
+    const existing = reservations.find((item) => item.id === id);
+    if (!existing) throw new Error('找不到要指派的預約，請重新整理預約清單。');
+    if (existing.status !== '有效') throw new Error('這筆預約已取消，無法指派。');
+    assertCanManageRelatedStation_(context, existing.stationCode, existing.originalStationCode, '指派此預約');
+    assertReservationVersion_(existing, payload, '指派');
+
+    const records = getStoredDispatchRecords_(context);
+    const reconciled = reconcileReservations_([existing], records)[0];
+    if (reconciled.demandCount == null) throw new Error('請先完成步驟②設定調派人數，再指派人員。');
+    const remaining = Math.max(0, Number(reconciled.demandCount) - Number(reconciled.assignedCount || 0));
+    if (remaining <= 0) throw new Error('這筆預約的人數已指派完成。');
+    if (uniqueKeys.length > remaining) {
+      throw new Error(`最多只能再指派 ${remaining} 人（需求 ${reconciled.demandCount} 人、已指派 ${reconciled.assignedCount} 人）。`);
+    }
+
+    const now = formatTimestamp_(new Date());
+    const newRecords = [];
+    const newAssignments = [];
+    uniqueKeys.forEach((assignmentKey) => {
+      const assignment = findNurseAssignmentByKey_(source, assignmentKey);
+      if (!assignment) throw new Error('找不到可指派的護理師配置，請重新整理。');
+      if (assignment.isUnavailable) {
+        throw new Error(`${assignment.name || assignment.email} 目前狀態為「${assignment.status || '不可調配'}」，不得調派。`);
+      }
+      if (normalizeOrgCode_(assignment.orgCode) !== normalizeOrgCode_(reconciled.originalStationCode)) {
+        throw new Error('指派人選必須屬於這筆預約的來源駐站。');
+      }
+      const dispatchRecord = buildReservationDispatchRecord_(reconciled, assignment, viewerEmail, now);
+      const combined = records.concat(newRecords);
+      assertNoOverlappingNurseDispatch_(dispatchRecord, combined);
+      assertTemporaryDispatchCooldown_(dispatchRecord, combined);
+      newRecords.push(dispatchRecord);
+      newAssignments.push({
+        assignmentKey: assignment.assignmentKey,
+        startDate: reconciled.startDate,
+        endDate: reconciled.endDate,
+        isLicensed: isLicensedNurseOrMedTech_(assignment)
+      });
+    });
+
+    const licenseResult = buildReservationLicenseWarnings_(source, context, reconciled, newAssignments, records);
+    if (licenseResult.warnings.length && !(payload && payload.confirmWarnings)) {
+      lock.releaseLock();
+      hasLock = false;
+      return {
+        success: false,
+        needsConfirmation: true,
+        warnings: licenseResult.warnings,
+        capped: licenseResult.capped
+      };
+    }
+
+    const nextRecords = newRecords.concat(records);
+    saveStoredDispatchRecords_(nextRecords, context);
+    appendDispatchAuditLogs_(newRecords.map((record) => buildDispatchAuditLog_('assign-reservation', record, {
+      context,
+      source,
+      viewerEmail,
+      occurredAt: now
+    })), context);
+    syncTemporaryDispatchColumn_(source, nextRecords, newAssignments.map((assignment) => assignment.assignmentKey), context);
+
+    const assignedIds = (reconciled.assignedDispatchIds || []).concat(newRecords.map((record) => record.id));
+    const progress = reconcileReservations_([{ ...existing, assignedDispatchIds: assignedIds }], nextRecords)[0];
+    const updatedReservation = {
+      ...existing,
+      assignedDispatchIds: assignedIds,
+      assignedCount: progress.assignedCount,
+      assignedSummary: progress.assignedSummary,
+      licenseWarnings: licenseResult.warnings,
+      version: createDispatchRecordVersion_(),
+      updatedAt: now,
+      updatedBy: viewerEmail
+    };
+    saveStoredReservation_(updatedReservation, context);
+    lock.releaseLock();
+    hasLock = false;
+
+    const response = getDispatchAppData(buildDispatchRefreshPayload_(payload, context));
+    response.reservation = reconcileReservations_([updatedReservation], getStoredDispatchRecords_(context))[0];
+    response.assignedCount = newRecords.length;
+    return response;
+  } catch (error) {
+    console.error('指派預約人員失敗:', error);
+    return { success: false, message: error && error.message ? error.message : '無法指派預約人員。' };
+  } finally {
+    if (hasLock) lock.releaseLock();
+  }
+}
+
+// 一次性遷移（於 GAS 編輯器手動執行）：把年度調派紀錄中「待指派」需求轉為預約列（沿用原 id 保證冪等），並自年度表移除。
+function migratePendingDispatchToReservations() {
+  const summary = [];
+
+  [{ testMode: false, label: '正式' }, { testMode: true, label: '測試' }].forEach((store) => {
+    const context = { viewer: { testMode: store.testMode } };
+    const records = getStoredDispatchRecords_(context);
+    const pendingRecords = records.filter((record) => record.status === '有效' && isPendingAssignmentRecord_(record));
+    if (!pendingRecords.length) {
+      summary.push(`${store.label}：無待指派需求可遷移。`);
+      return;
+    }
+
+    const now = formatTimestamp_(new Date());
+    pendingRecords.forEach((record) => {
+      saveStoredReservation_({
+        id: record.id,
+        originalStationCode: normalizeOrgCode_(record.originalStationCode),
+        originalStationName: record.originalStationName || record.originalStationCode,
+        stationCode: normalizeOrgCode_(record.stationCode),
+        stationName: record.stationName || record.stationCode,
+        startDate: record.startDate,
+        endDate: record.endDate,
+        shiftName: normalizeDispatchMode_(record.shiftName || APP_CONFIG.shiftOptions[0]),
+        demandCount: Math.max(1, Number(record.demandCount || 1)),
+        assignedCount: 0,
+        assignedSummary: '',
+        assignedDispatchIds: [],
+        licenseWarnings: [],
+        version: createDispatchRecordVersion_(),
+        status: '有效',
+        createdBy: record.createdBy || '',
+        createdAt: record.createdAt || now,
+        updatedBy: record.updatedBy || record.createdBy || '',
+        updatedAt: now,
+        note: record.note || ''
+      }, context);
+    });
+
+    const remaining = records.filter((record) => !(record.status === '有效' && isPendingAssignmentRecord_(record)));
+    saveStoredDispatchRecords_(remaining, context);
+
+    appendDispatchAuditLogs_(pendingRecords.reduce((logs, record) => {
+      logs.push(buildDispatchAuditLog_('delete-pending', record, { context, viewerEmail: '', occurredAt: now }));
+      logs.push(buildDispatchAuditLog_('create-reservation', {
+        ...record,
+        demandCount: Math.max(1, Number(record.demandCount || 1))
+      }, { context, viewerEmail: '', occurredAt: now }));
+      return logs;
+    }, []), context);
+
+    summary.push(`${store.label}：已遷移 ${pendingRecords.length} 筆待指派需求為預約。`);
+  });
+
+  const message = summary.join('\n');
+  console.log(message);
+  return message;
 }
 
 function deleteWorkHourDispatch(payload) {
@@ -1656,6 +2529,7 @@ function readAssignmentRecords_(sheet, personnelByEmail) {
   const managerNameIndex = findHeaderIndex_(headers, FIELD_ALIASES.managerName, 6);
   const statusIndex = findHeaderIndex_(headers, FIELD_ALIASES.status);
   const temporaryDispatchIndex = findHeaderIndex_(headers, FIELD_ALIASES.temporaryDispatch);
+  const licenseIndex = findHeaderIndex_(headers, FIELD_ALIASES.license, 7);
 
   return values.slice(1)
     .map((row, index) => {
@@ -1677,7 +2551,8 @@ function readAssignmentRecords_(sheet, personnelByEmail) {
         isUnavailable: isUnavailableStatus_(status),
         managerEmail: normalizeEmail_(row[managerEmailIndex]),
         managerName: String(row[managerNameIndex] || '').trim(),
-        temporaryDispatch: temporaryDispatchIndex >= 0 ? String(row[temporaryDispatchIndex] || '').trim() : ''
+        temporaryDispatch: temporaryDispatchIndex >= 0 ? String(row[temporaryDispatchIndex] || '').trim() : '',
+        licenseType: licenseIndex >= 0 ? String(row[licenseIndex] || '').trim() : ''
       };
     })
     .filter((assignment) => assignment.email && assignment.orgCode);
@@ -1936,7 +2811,9 @@ function buildDispatchContext_(source, viewerEmail, options) {
         isUnavailable: Boolean(assignment.isUnavailable),
         availabilityLabel: getAvailabilityLabel_(assignment),
         orgCode: assignment.orgCode,
-        orgName: assignment.orgName || station.name
+        orgName: assignment.orgName || station.name,
+        licenseType: assignment.licenseType || '',
+        isLicensed: isLicensedNurseOrMedTech_(assignment)
       }));
     station.members = nurseAssignments.filter((assignment) => !assignment.isUnavailable);
     station.unavailableMembers = nurseAssignments.filter((assignment) => assignment.isUnavailable);
@@ -1982,7 +2859,9 @@ function buildDispatchContext_(source, viewerEmail, options) {
         isUnavailable: Boolean(assignment.isUnavailable),
         availabilityLabel: getAvailabilityLabel_(assignment),
         orgCode: assignment.orgCode,
-        orgName: assignment.orgName || station.name || assignment.orgCode
+        orgName: assignment.orgName || station.name || assignment.orgCode,
+        licenseType: assignment.licenseType || '',
+        isLicensed: isLicensedNurseOrMedTech_(assignment)
       };
     })
     .sort(compareNurses_);
@@ -2042,6 +2921,13 @@ function dedupeAssignments_(assignments) {
 function isNurseAssignment_(assignment) {
   const title = String(assignment.title || '').trim();
   return title === '收案人員';
+}
+
+// 依人員職務配置 H 欄「相關執照」判斷是否具護理師或醫檢師執照（供預約組成規則使用）。
+function isLicensedNurseOrMedTech_(assignment) {
+  const license = String(assignment && assignment.licenseType || '').replace(/\s+/g, '');
+  if (!license) return false;
+  return APP_CONFIG.licensedLicenseKeywords.some((keyword) => license.indexOf(keyword) >= 0);
 }
 
 function isUnavailableStatus_(status) {
@@ -4179,7 +5065,11 @@ function normalizeAuditAction_(action) {
     'assign-pending',
     'delete-pending',
     'create-station',
-    'delete-station'
+    'delete-station',
+    'create-reservation',
+    'update-reservation',
+    'assign-reservation',
+    'delete-reservation'
   ].includes(normalized) ? normalized : 'update';
 }
 
@@ -4193,7 +5083,11 @@ function getDispatchAuditActionLabel_(action) {
     'assign-pending': '確認待指派人選',
     'delete-pending': '刪除待指派需求',
     'create-station': '新增駐站',
-    'delete-station': '刪除駐站'
+    'delete-station': '刪除駐站',
+    'create-reservation': '建立預約駐站',
+    'update-reservation': '修改預約駐站',
+    'assign-reservation': '預約指派人選',
+    'delete-reservation': '取消預約駐站'
   };
   return labels[normalized] || '調派異動';
 }
@@ -4293,6 +5187,7 @@ function normalizeStoredDispatchRecord_(record) {
     endTime,
     hours,
     note: String(record.note || '').trim(),
+    reservationId: String(record.reservationId || '').trim(),
     createdAt: String(record.createdAt || '').trim(),
     createdBy: normalizeEmail_(record.createdBy),
     updatedAt: String(record.updatedAt || '').trim(),
