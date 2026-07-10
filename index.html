@@ -370,7 +370,7 @@
       bottom: 0;
       left: 0;
       z-index: 19;
-      width: min(420px, calc(100vw - 56px));
+      width: min(480px, calc(100vw - 56px));
       background: var(--surface);
       border-right: 1px solid var(--line);
       overflow-y: auto;
@@ -2159,7 +2159,7 @@
                 <select id="station-select" class="station-select-native" required tabindex="-1" aria-hidden="true"></select>
                 <div class="station-picker" id="station-picker">
                   <button class="station-picker-button" type="button" id="station-picker-button" aria-haspopup="listbox" aria-expanded="false">
-                    <span class="station-picker-label" id="station-picker-label">請選擇駐站</span>
+                    <span class="station-picker-label" id="station-picker-label">請選擇調派駐站</span>
                   </button>
                   <div class="station-picker-menu hidden" id="station-picker-menu" role="listbox" tabindex="-1"></div>
                 </div>
@@ -3723,14 +3723,14 @@
       el.filterStation.innerHTML = stationOptions;
       el.filterStation.value = state.filters.stationCode || '';
 
-      el.stationSelect.innerHTML = orderedStations.map((station) => (
-        `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
-      )).join('');
+      el.stationSelect.innerHTML = [
+        '<option value="">請選擇調派駐站</option>',
+        ...orderedStations.map((station) => (
+          `<option value="${escapeHtml(station.code)}">${escapeHtml(getStationDisplayName(station))}</option>`
+        ))
+      ].join('');
       if (selectedTargetStation && state.stationByCode.has(selectedTargetStation)) {
         el.stationSelect.value = selectedTargetStation;
-      }
-      if (!el.stationSelect.value && orderedStations[0]) {
-        el.stationSelect.value = orderedStations[0].code;
       }
 
       renderStationPickerOptions(orderedStations);
@@ -3775,7 +3775,7 @@
 
     function syncStationPicker() {
       const station = getStationByCode(el.stationSelect.value);
-      const stationText = station ? getStationDisplayName(station) : '請選擇駐站';
+      const stationText = station ? getStationDisplayName(station) : '請選擇調派駐站';
       el.stationPickerLabel.innerHTML = station
         ? `${buildStationColorSwatchHtml(station)}<span>${escapeHtml(stationText)}</span>`
         : `<span>${escapeHtml(stationText)}</span>`;
@@ -7313,8 +7313,6 @@
       el.dispatchEndDate.value = rememberedRange.endDate;
       el.nurseOriginStation.value = '';
       setSelectedAssignmentKeys([]);
-      const orderedStations = getOrderedStations();
-      if (orderedStations[0]) el.stationSelect.value = orderedStations[0].code;
       syncStationPicker();
       if (state.shiftOptions[0]) el.shiftName.value = state.shiftOptions[0];
       renderShiftOptions();
