@@ -1417,6 +1417,8 @@ function getStationSupportLookup(payload) {
       .forEach((reservation) => {
         rows.push({
           sourceType: 'reservation',
+          reservationId: reservation.id,
+          stage: reservation.stage,
           originalStationCode: reservation.originalStationCode,
           originalStationName: reservation.originalStationName || reservation.originalStationCode,
           startDate: reservation.startDate,
@@ -1440,6 +1442,8 @@ function getStationSupportLookup(payload) {
       .forEach((record) => {
         rows.push({
           sourceType: 'dispatch',
+          reservationId: '',
+          stage: 'completed',
           originalStationCode: record.originalStationCode,
           originalStationName: record.originalStationName || record.originalStationCode,
           startDate: record.startDate,

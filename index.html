@@ -2050,6 +2050,24 @@
       color: #5b21b6;
     }
 
+    #support-lookup-station-list {
+      max-height: 168px;
+    }
+
+    .support-lookup-people {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .support-lookup-continue-btn {
+      min-height: 30px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+
     /* 清單改卡片列，捨棄 min-width 620 的統計表格，避免窄 modal 橫向捲動。 */
     .reservation-list-head {
       display: flex;
@@ -2606,7 +2624,7 @@
             <section class="reservation-section">
               <div class="reservation-section-head">
                 <span class="reservation-section-num">1</span>
-                <span class="reservation-section-title">支援路線與期間</span>
+                <span class="reservation-section-title">設定來源/目標駐站</span>
               </div>
               <div class="reservation-section-body">
                 <div class="two-cols">
@@ -2693,16 +2711,17 @@
         <div class="modal-header">
           <div>
             <div class="panel-title" id="support-lookup-title">反查支援駐站</div>
-            <div class="muted">輸入目的駐站，查看哪些駐站、什麼期間會來支援（含未完成預約與已確認調派）。</div>
+            <div class="muted">點選目的駐站，即可查看哪些駐站、什麼期間會來支援（含未完成預約與已確認調派）。</div>
           </div>
           <button class="btn btn-ghost" type="button" id="support-lookup-close">關閉</button>
         </div>
         <div class="headcount-content">
+          <div class="field">
+            <label>目的駐站</label>
+            <input id="support-lookup-station" type="hidden">
+            <div class="dispatch-target-choice-list" id="support-lookup-station-list"></div>
+          </div>
           <div class="records-query">
-            <div class="field">
-              <label for="support-lookup-station">目的駐站</label>
-              <select id="support-lookup-station"></select>
-            </div>
             <div class="field">
               <label for="support-lookup-date-from">起日</label>
               <input id="support-lookup-date-from" type="date">
@@ -3040,6 +3059,7 @@
         'support-lookup-modal',
         'support-lookup-close',
         'support-lookup-station',
+        'support-lookup-station-list',
         'support-lookup-date-from',
         'support-lookup-date-to',
         'support-lookup-load-btn',
@@ -3280,6 +3300,8 @@
         if (event.target === el.supportLookupModal) closeSupportLookupModal();
       });
       if (el.supportLookupLoadBtn) el.supportLookupLoadBtn.addEventListener('click', loadSupportLookup);
+      if (el.supportLookupStationList) el.supportLookupStationList.addEventListener('click', handleSupportLookupStationClick);
+      if (el.supportLookupBody) el.supportLookupBody.addEventListener('click', handleSupportLookupBodyClick);
       el.stationForm.addEventListener('submit', saveStation);
       // 追蹤表單修改狀態，供關閉攔截與分頁離開提示使用（Issue #9）。
       el.stationForm.addEventListener('input', markStationFormDirty);
@@ -5140,9 +5162,47 @@
     // ==================== 反查支援駐站 ====================
     function populateSupportLookupStations() {
       const stations = getOrderedStations();
-      el.supportLookupStation.innerHTML = ['<option value="">請選擇目的駐站</option>']
-        .concat(stations.map((s) => `<option value="${escapeHtml(s.code)}">${escapeHtml(getStationDisplayName(s))}</option>`))
-        .join('');
+      if (!stations.length) {
+        el.supportLookupStationList.innerHTML = '<div class="dispatch-target-choice-empty">沒有可反查的駐站。</div>';
+        return;
+      }
+      const selectedCode = el.supportLookupStation.value || '';
+      el.supportLookupStationList.innerHTML = stations.map((station) => {
+        const isSelected = station.code === selectedCode;
+        return `
+          <button
+            class="dispatch-target-choice ${isSelected ? 'is-selected' : ''}"
+            type="button"
+            data-support-station="${escapeHtml(station.code)}"
+            aria-pressed="${isSelected ? 'true' : 'false'}"
+          >${escapeHtml(getStationDisplayName(station))}</button>
+        `;
+      }).join('');
+    }
+
+    function applySupportLookupYearRange() {
+      const year = String(getTodayString()).slice(0, 4);
+      el.supportLookupDateFrom.value = `${year}-01-01`;
+      el.supportLookupDateTo.value = `${year}-12-31`;
+    }
+
+    function handleSupportLookupStationClick(event) {
+      const button = event.target.closest('[data-support-station]');
+      if (!button || !el.supportLookupStationList.contains(button)) return;
+      if (state.isLoadingSupportLookup) return;
+      el.supportLookupStation.value = button.getAttribute('data-support-station') || '';
+      populateSupportLookupStations();
+      applySupportLookupYearRange();
+      loadSupportLookup();
+    }
+
+    function handleSupportLookupBodyClick(event) {
+      const button = event.target.closest('[data-support-reservation]');
+      if (!button || !el.supportLookupBody.contains(button)) return;
+      const reservationId = String(button.getAttribute('data-support-reservation') || '').trim();
+      if (!reservationId) return;
+      closeSupportLookupModal();
+      openReservationModal({ reservationId });
     }
 
     function setSupportLookupStatus(message, type) {
@@ -5151,11 +5211,10 @@
     }
 
     function openSupportLookupModal() {
+      el.supportLookupStation.value = '';
       populateSupportLookupStations();
-      const today = getTodayString();
-      el.supportLookupDateFrom.value = today;
-      el.supportLookupDateTo.value = addDaysToDateString(today, 30);
-      setSupportLookupStatus('');
+      applySupportLookupYearRange();
+      setSupportLookupStatus('請點選要反查的目的駐站。');
       el.supportLookupBody.innerHTML = '';
       el.supportLookupCount.textContent = '0 筆';
       el.supportLookupModal.classList.remove('hidden');
@@ -5169,7 +5228,7 @@
     async function loadSupportLookup() {
       if (state.isLoadingSupportLookup) return;
       const stationCode = el.supportLookupStation.value || '';
-      if (!stationCode) { setSupportLookupStatus('請選擇目的駐站。', 'error'); return; }
+      if (!stationCode) { setSupportLookupStatus('請點選目的駐站。', 'error'); return; }
       state.isLoadingSupportLookup = true;
       setButtonBusy(el.supportLookupLoadBtn, true, '查詢中');
       setSupportLookupStatus('查詢中...');
@@ -5206,12 +5265,16 @@
           ? (row.assignedCount ? `${row.assignedCount} 人` : '—')
           : `${row.assignedCount || 0} / ${row.demandCount}`;
         const people = (row.people || []).length ? escapeHtml(row.people.join('、')) : '<span class="muted">未指派</span>';
+        const canContinue = row.sourceType === 'reservation' && row.stage !== 'completed' && row.reservationId;
+        const continueHtml = canContinue
+          ? `<button class="btn btn-ghost support-lookup-continue-btn" type="button" data-support-reservation="${escapeHtml(row.reservationId)}">繼續預約</button>`
+          : '';
         return `<tr>
           <td><span class="${pillClass}">${escapeHtml(row.stageLabel || '')}</span></td>
           <td>${escapeHtml(row.originalStationName || row.originalStationCode || '')}</td>
           <td>${escapeHtml(row.startDate || '')} ~ ${escapeHtml(row.endDate || '')}</td>
           <td>${escapeHtml(progress)}</td>
-          <td>${people}</td>
+          <td><div class="support-lookup-people">${people}${continueHtml}</div></td>
         </tr>`;
       }).join('');
     }
