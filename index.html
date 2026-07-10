@@ -329,7 +329,7 @@
     .layout {
       padding: 20px 24px 28px;
       display: grid;
-      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 18px;
       align-items: start;
     }
@@ -364,8 +364,83 @@
       gap: 14px;
     }
 
-    .dispatch-panel.is-editing {
-      border-color: #f59e0b;
+    .dispatch-drawer {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 19;
+      width: min(420px, calc(100vw - 56px));
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      overflow-y: auto;
+      transform: translateX(-100%);
+      transition: transform .3s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    .dispatch-drawer.is-open {
+      transform: translateX(0);
+      box-shadow: var(--shadow);
+    }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 18;
+      background: rgba(15, 23, 42, 0.28);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .3s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    .drawer-backdrop.is-open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .drawer-tab {
+      position: fixed;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 17;
+      writing-mode: vertical-rl;
+      letter-spacing: .35em;
+      padding: 18px 10px;
+      border: 0;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: var(--primary);
+      color: #fff;
+      cursor: pointer;
+      transition: opacity .3s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    .drawer-tab:hover {
+      background: var(--primary-strong);
+    }
+
+    .drawer-tab.is-drawer-open {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .dispatch-drawer .dispatch-panel {
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      min-height: 100%;
+    }
+
+    .dispatch-drawer .dispatch-panel.is-editing {
+      border-left: 3px solid #f59e0b;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .dispatch-drawer,
+      .drawer-backdrop,
+      .drawer-tab {
+        transition: none;
+      }
     }
 
     .edit-context {
@@ -1703,7 +1778,6 @@
       .records-query,
       .fairness-summary,
       .fairness-grid,
-      .layout,
       .schedule-layout {
         grid-template-columns: 1fr;
       }
@@ -1741,6 +1815,10 @@
       .reservation-list-side {
         justify-items: start;
       }
+
+      .dispatch-drawer {
+        width: calc(100vw - 44px);
+      }
     }
 
     @media print {
@@ -1748,7 +1826,9 @@
       .bottom-toolbar,
       .toolbar,
       .records-query,
-      .layout > .panel:first-child,
+      .dispatch-drawer,
+      .drawer-backdrop,
+      .drawer-tab,
       .schedule-toolbar,
       .schedule-controls {
         display: none !important;
@@ -2009,6 +2089,11 @@
     </div>
 
     <main id="app-main" class="layout hidden">
+      <button class="drawer-tab" type="button" id="dispatch-drawer-tab"
+              aria-expanded="false" aria-controls="dispatch-drawer">新增調派</button>
+      <div class="drawer-backdrop" id="dispatch-drawer-backdrop" aria-hidden="true"></div>
+      <aside class="dispatch-drawer" id="dispatch-drawer" role="dialog" aria-modal="true"
+             aria-labelledby="form-title" inert>
       <section class="panel dispatch-panel" id="dispatch-panel">
         <div class="panel-header">
           <div>
@@ -2016,6 +2101,7 @@
             <div class="muted">唯一鍵：護理師信箱 + 所屬組別代碼</div>
           </div>
           <button class="btn btn-ghost hidden" type="button" id="cancel-edit-btn">取消編輯</button>
+          <button class="btn btn-ghost" type="button" id="dispatch-drawer-close" aria-label="關閉調派表單">關閉</button>
         </div>
         <div class="panel-body">
           <form id="dispatch-form" class="form-grid">
@@ -2111,6 +2197,7 @@
           </form>
         </div>
       </section>
+      </aside>
 
       <div class="content-stack">
         <section class="panel">
@@ -2608,6 +2695,8 @@
       isLoadingSupportLookup: false,
       stationModalType: 'general',
       isStationFormDirty: false,
+      isDispatchFormDirty: false,
+      isPrefillingDispatchForm: false,
       testMode: false,
       scheduleView: 'week',
       scheduleYear: new Date().getFullYear(),
@@ -2787,6 +2876,10 @@
         'schedule-matrix-wrap',
         'schedule-head',
         'schedule-body',
+        'dispatch-drawer',
+        'dispatch-drawer-backdrop',
+        'dispatch-drawer-tab',
+        'dispatch-drawer-close',
         'dispatch-panel',
         'dispatch-form',
         'record-id',
@@ -2993,11 +3086,22 @@
         if (el.stationPicker && !el.stationPicker.contains(event.target)) closeStationPicker();
       });
       document.querySelectorAll('[data-dispatch-target-mode]').forEach((button) => {
-        button.addEventListener('click', () => selectDispatchTargetMode(button.getAttribute('data-dispatch-target-mode')));
+        button.addEventListener('click', () => {
+          const previousMode = el.dispatchTargetMode.value;
+          selectDispatchTargetMode(button.getAttribute('data-dispatch-target-mode'));
+          if (el.dispatchTargetMode.value !== previousMode) markDispatchFormDirty();
+        });
       });
       el.nurseChoiceList.addEventListener('click', handleNurseChoiceClick);
+      el.nurseChoiceList.addEventListener('click', (event) => {
+        if (event.target.closest('[data-nurse-choice]')) markDispatchFormDirty();
+      });
       document.querySelectorAll('[data-shift-mode]').forEach((button) => {
-        button.addEventListener('click', () => selectDispatchMode(button.getAttribute('data-shift-mode')));
+        button.addEventListener('click', () => {
+          const previousMode = el.shiftName.value;
+          selectDispatchMode(button.getAttribute('data-shift-mode'));
+          if (el.shiftName.value !== previousMode) markDispatchFormDirty();
+        });
       });
       el.dispatchStartDate.addEventListener('change', () => {
         if (!el.dispatchEndDate.value || el.dispatchEndDate.value < el.dispatchStartDate.value) {
@@ -3025,6 +3129,7 @@
           : '已清空欄位：尚未建立調派，月曆與紀錄未變更。', 'success');
       });
       el.cancelEditBtn.addEventListener('click', () => {
+        if (!closeDispatchDrawer()) return;
         resetForm({
           statusMessage: '已取消修改，未變更任何調派。',
           statusType: 'success'
@@ -3032,6 +3137,10 @@
         setRecordsStatus('已取消修改：月曆與紀錄未變更。', 'success');
       });
       el.dispatchForm.addEventListener('submit', saveDispatch);
+      el.dispatchForm.addEventListener('input', markDispatchFormDirty);
+      el.dispatchForm.addEventListener('change', markDispatchFormDirty);
+      el.dispatchDrawerTab.addEventListener('click', openDispatchDrawer);
+      el.dispatchDrawerClose.addEventListener('click', () => closeDispatchDrawer());
       el.stationModalClose.addEventListener('click', closeStationModal);
       el.stationModal.addEventListener('click', (event) => {
         if (event.target === el.stationModal) closeStationModal();
@@ -3110,11 +3219,22 @@
         if (state.isStationFormDirty && !el.stationModal.classList.contains('hidden')) {
           event.preventDefault();
           event.returnValue = '';
+          return;
+        }
+        if (state.isDispatchFormDirty && el.dispatchDrawer.classList.contains('is-open')) {
+          event.preventDefault();
+          event.returnValue = '';
         }
       });
       window.addEventListener('focus', () => refreshRecordsNow('focus'));
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refreshRecordsNow('visible');
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (!el.dispatchDrawer.classList.contains('is-open')) return;
+        if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+        closeDispatchDrawer();
       });
     }
 
@@ -3699,6 +3819,7 @@
     function handleStationPickerMenuKeydown(event) {
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
         closeStationPicker();
         el.stationPickerButton.focus();
         return;
@@ -7014,6 +7135,7 @@
           skipFairnessAutoLoad: true
         });
         resetForm({ preserveStatus: true });
+        closeDispatchDrawer(true);
         setStatus(successMessage, 'success');
         await refreshViewsAfterMutation(successMessage, {
           reason: isPending ? 'create-pending-dispatch' : (payload.id ? 'update-dispatch' : 'create-dispatch')
@@ -7042,6 +7164,7 @@
         return;
       }
 
+      state.isPrefillingDispatchForm = true;
       el.recordId.value = record.id;
       el.recordVersion.value = record.version || '';
       el.formTitle.textContent = '修改工時調派';
@@ -7066,7 +7189,9 @@
       renderEditContext(record);
       renderRecords();
       setStatus('');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      state.isPrefillingDispatchForm = false;
+      state.isDispatchFormDirty = false;
+      openDispatchDrawer();
     }
 
     function renderEditContext(record) {
@@ -7156,7 +7281,34 @@
       }
     }
 
+    function openDispatchDrawer() {
+      el.dispatchDrawer.classList.add('is-open');
+      el.dispatchDrawer.removeAttribute('inert');
+      el.dispatchDrawerBackdrop.classList.add('is-open');
+      el.dispatchDrawerTab.classList.add('is-drawer-open');
+      el.dispatchDrawerTab.setAttribute('aria-expanded', 'true');
+      el.dispatchStartDate.focus();
+    }
+
+    function closeDispatchDrawer(force) {
+      if (!el.dispatchDrawer.classList.contains('is-open')) return true;
+      if (!force && state.isDispatchFormDirty && !window.confirm('尚有未儲存的調派內容，確定要關閉嗎？')) return false;
+      el.dispatchDrawer.classList.remove('is-open');
+      el.dispatchDrawer.setAttribute('inert', '');
+      el.dispatchDrawerBackdrop.classList.remove('is-open');
+      el.dispatchDrawerTab.classList.remove('is-drawer-open');
+      el.dispatchDrawerTab.setAttribute('aria-expanded', 'false');
+      el.dispatchDrawerTab.focus();
+      return true;
+    }
+
+    function markDispatchFormDirty() {
+      if (state.isPrefillingDispatchForm) return;
+      state.isDispatchFormDirty = true;
+    }
+
     function resetForm(options) {
+      state.isPrefillingDispatchForm = true;
       const settings = options || {};
       const rememberedRange = getRememberedDispatchDateRange();
       el.recordId.value = '';
@@ -7189,6 +7341,8 @@
       if (!settings.preserveStatus) {
         setStatus(settings.statusMessage || '', settings.statusType || '');
       }
+      state.isPrefillingDispatchForm = false;
+      state.isDispatchFormDirty = false;
     }
 
     function rememberDispatchDateRange(startDate, endDate) {
