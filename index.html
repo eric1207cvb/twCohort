@@ -2233,7 +2233,8 @@
                     <input id="schedule-year" type="number" min="2020" max="2100" step="1">
                   </div>
                   <button class="btn btn-ghost schedule-control-year" type="button" id="schedule-year-load">載入年度</button>
-                  <button class="btn btn-ghost hidden" type="button" id="open-reservation-btn">預約駐站</button>
+                  <button class="btn btn-ghost hidden" type="button" id="open-reservation-btn">待辦預約</button>
+                  <button class="btn btn-primary hidden" type="button" id="open-reservation-new-btn">新增預約</button>
                   <button class="btn btn-ghost hidden" type="button" id="open-support-lookup-btn">反查支援</button>
                   <button class="btn btn-ghost" type="button" id="print-schedule-btn">列印</button>
                 </div>
@@ -2512,7 +2513,7 @@
       <section class="station-modal reservation-modal">
         <div class="modal-header">
           <div>
-            <div class="panel-title" id="reservation-modal-title">預約駐站</div>
+            <div class="panel-title" id="reservation-modal-title">待辦預約</div>
             <div class="muted">建立支援路線後，可分次完成人數設定與人員指派。</div>
           </div>
           <button class="btn btn-ghost" type="button" id="reservation-modal-close">關閉</button>
@@ -2601,9 +2602,6 @@
                   <input id="reservation-candidate-filter" type="text" placeholder="輸入姓名篩選">
                 </div>
                 <div class="dispatch-target-choice-list" id="reservation-candidate-list"></div>
-                <div class="button-row">
-                  <button class="btn btn-primary" type="button" id="reservation-assign-btn">指派所選人員</button>
-                </div>
               </div>
             </section>
           </div>
@@ -2939,6 +2937,7 @@
         'pending-assignment-status',
         'pending-assignment-save-btn',
         'open-reservation-btn',
+        'open-reservation-new-btn',
         'open-support-lookup-btn',
         'open-reservation-from-form-btn',
         'reservation-modal',
@@ -2964,7 +2963,6 @@
         'reservation-candidate-filter-field',
         'reservation-candidate-filter',
         'reservation-candidate-list',
-        'reservation-assign-btn',
         'reservation-save-btn',
         'reservation-status',
         'reservation-back-btn',
@@ -3162,6 +3160,7 @@
       el.pendingAssignmentSaveBtn.addEventListener('click', assignPendingRecord);
       // 預約駐站精靈與反查支援。
       if (el.openReservationBtn) el.openReservationBtn.addEventListener('click', () => openReservationModal());
+      if (el.openReservationNewBtn) el.openReservationNewBtn.addEventListener('click', () => openReservationModal({ createNew: true }));
       if (el.openReservationFromFormBtn) el.openReservationFromFormBtn.addEventListener('click', () => openReservationModal({ prefillFromForm: true }));
       if (el.openSupportLookupBtn) el.openSupportLookupBtn.addEventListener('click', openSupportLookupModal);
       if (el.reservationModalClose) el.reservationModalClose.addEventListener('click', () => closeReservationModal());
@@ -3203,7 +3202,6 @@
         });
       }
       if (el.reservationSaveBtn) el.reservationSaveBtn.addEventListener('click', saveReservationDraft);
-      if (el.reservationAssignBtn) el.reservationAssignBtn.addEventListener('click', () => assignReservationCandidates());
       if (el.reservationListBody) el.reservationListBody.addEventListener('click', handleReservationListClick);
       if (el.reservationCandidateList) el.reservationCandidateList.addEventListener('change', handleReservationCandidateChange);
       if (el.supportLookupClose) el.supportLookupClose.addEventListener('click', closeSupportLookupModal);
@@ -3692,6 +3690,7 @@
       el.deleteStationBtn.classList.toggle('hidden', !canCreate);
       const isManager = Boolean(state.viewer && state.viewer.isStationManager);
       if (el.openReservationBtn) el.openReservationBtn.classList.toggle('hidden', !isManager);
+      if (el.openReservationNewBtn) el.openReservationNewBtn.classList.toggle('hidden', !isManager);
       if (el.openSupportLookupBtn) el.openSupportLookupBtn.classList.toggle('hidden', !isManager);
       updateStationActionButtons();
     }
@@ -4676,6 +4675,7 @@
         setReservationStatus('找不到該預約，請從清單重新選擇。', 'error');
         return;
       }
+      if (settings.createNew) { startReservationWizard(null); return; }
       if (settings.prefillFromForm) {
         startReservationWizard(null);
         el.reservationSourceStation.value = el.nurseOriginStation.value || '';
@@ -4876,8 +4876,18 @@
         setReservationStatus('請選擇支援起日。', 'error');
         return;
       }
+      const keys = Array.from(state.reservationSelectedKeys);
       const saved = await submitReservationSave(buildReservationSavePayload());
-      if (saved) setReservationStatus('預約已儲存。', 'success');
+      if (!saved) return;
+      if (keys.length) {
+        await runReservationAssign(saved, keys, false); // 內部完成後會導回清單
+        return;
+      }
+      showReservationList();
+      if (el.reservationListStatus) {
+        el.reservationListStatus.textContent = '預約已儲存。';
+        el.reservationListStatus.className = 'status success';
+      }
     }
 
     // 剩餘可指派名額＝目前人數輸入值 − 已存的已指派數（新預約 assignedCount=0）。
@@ -4978,26 +4988,11 @@
         <span class="reservation-quota-pill">已選 ${selected} 人</span>
         <span class="reservation-quota-pill ${shortfallClass}">${shortfallText}</span>
       `;
-      el.reservationAssignBtn.disabled = selected === 0;
-      el.reservationAssignBtn.textContent = selected ? `指派所選 ${selected} 人` : '指派所選人員';
-    }
-
-    async function assignReservationCandidates() {
-      if (state.isSavingReservation) return;
-      const keys = Array.from(state.reservationSelectedKeys);
-      if (!keys.length) { setReservationStatus('請至少選擇一位人員。', 'error'); return; }
-      const count = Number(el.reservationDemandCount.value);
-      if (!Number.isInteger(count) || count < 1) { setReservationStatus('請先設定調派人數。', 'error'); return; }
-
-      // 指派前自動存檔目前路線＋人數，確保有 id 與最新 version 可掛上調派。
-      const saved = await submitReservationSave(buildReservationSavePayload());
-      if (!saved || !saved.id) return;
-      await runReservationAssign(saved, keys, false);
     }
 
     async function runReservationAssign(saved, keys, confirmWarnings) {
       state.isSavingReservation = true;
-      setButtonBusy(el.reservationAssignBtn, true, '指派中');
+      setButtonBusy(el.reservationSaveBtn, true, '指派中');
       setReservationStatus('指派中...');
       showBusy('正在指派預約人員...');
       try {
@@ -5012,7 +5007,7 @@
         if (response && response.needsConfirmation) {
           hideBusy();
           state.isSavingReservation = false;
-          setButtonBusy(el.reservationAssignBtn, false);
+          setButtonBusy(el.reservationSaveBtn, false);
           updateReservationCandidateSummary();
           const lines = (response.warnings || []).map((w) => w.message).join('\n');
           const cappedNote = response.capped ? '\n（期間較長，僅檢查前 31 天）' : '';
@@ -5028,25 +5023,16 @@
         const successMessage = `已指派 ${response.assignedCount || keys.length} 人。`;
         setStatus(successMessage, 'success');
         await refreshViewsAfterMutation(successMessage, { reason: 'assign-reservation' });
-        const done = state.activeReservation && Number(state.activeReservation.assignedCount || 0) >= Number(state.activeReservation.demandCount || 0);
-        if (done) {
-          showReservationList();
-          if (el.reservationListStatus) {
-            el.reservationListStatus.textContent = '這筆預約已完成指派。';
-            el.reservationListStatus.className = 'status success';
-          }
-        } else {
-          if (state.activeReservation && state.activeReservation.demandCount != null) {
-            el.reservationDemandCount.value = state.activeReservation.demandCount;
-          }
-          updateReservationSectionVisibility();
-          setReservationStatus(successMessage, 'success');
+        showReservationList();
+        if (el.reservationListStatus) {
+          el.reservationListStatus.textContent = successMessage;
+          el.reservationListStatus.className = 'status success';
         }
       } catch (error) {
         setReservationStatus(error && error.message ? error.message : '指派失敗。', 'error');
       } finally {
         state.isSavingReservation = false;
-        setButtonBusy(el.reservationAssignBtn, false, '指派所選人員');
+        setButtonBusy(el.reservationSaveBtn, false, '儲存預約');
         hideBusy();
       }
     }
