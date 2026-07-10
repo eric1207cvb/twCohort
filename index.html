@@ -1769,9 +1769,6 @@
     }
 
     /* 預約駐站精靈與反查 */
-    .reservation-stepper {
-      margin-bottom: 14px;
-    }
     .reservation-step {
       display: flex;
       flex-direction: column;
@@ -2313,13 +2310,7 @@
         </div>
 
         <div class="reservation-wizard-view hidden" id="reservation-wizard-view">
-          <div class="dispatch-target-toggle reservation-stepper" role="tablist" aria-label="預約步驟">
-            <button class="btn dispatch-target-btn is-active" type="button" data-reservation-step="1">1 路線</button>
-            <button class="btn dispatch-target-btn" type="button" data-reservation-step="2">2 人數</button>
-            <button class="btn dispatch-target-btn" type="button" data-reservation-step="3">3 指派</button>
-          </div>
-
-          <div class="reservation-step" id="reservation-step1">
+          <div class="reservation-step">
             <div class="two-cols">
               <div class="field">
                 <label for="reservation-source-station">來源駐站（A）</label>
@@ -2352,34 +2343,27 @@
               <label for="reservation-note">備註</label>
               <textarea id="reservation-note" maxlength="300"></textarea>
             </div>
-            <div class="button-row">
-              <button class="btn btn-primary" type="button" id="reservation-step1-save-btn">儲存路線</button>
-            </div>
-          </div>
 
-          <div class="reservation-step hidden" id="reservation-step2">
-            <div class="field">
+            <div class="field hidden" id="reservation-count-section">
               <label for="reservation-demand-count">調派人數</label>
               <input id="reservation-demand-count" type="number" min="1" step="1">
-              <div class="rule-note" id="reservation-demand-hint">請先完成步驟①設定路線。</div>
+              <div class="rule-note" id="reservation-demand-hint">選擇目的駐站後即可設定調派人數。</div>
             </div>
-            <div class="button-row">
-              <button class="btn btn-primary" type="button" id="reservation-step2-save-btn">儲存人數</button>
-            </div>
-          </div>
 
-          <div class="reservation-step hidden" id="reservation-step3">
-            <div class="reservation-assign-summary" id="reservation-assign-summary"></div>
-            <div class="rule-note">規則：目的駐站至少 2 人，且其中至少 1 人具護理師或醫檢師執照（不足會提醒，仍可確認）。</div>
-            <div class="dispatch-target-choice-list" id="reservation-candidate-list"></div>
-            <div class="button-row">
-              <button class="btn btn-primary" type="button" id="reservation-step3-save-btn">指派所選人員</button>
+            <div class="hidden" id="reservation-assign-section">
+              <div class="reservation-assign-summary" id="reservation-assign-summary"></div>
+              <div class="rule-note">規則：目的駐站至少 2 人，且其中至少 1 人具護理師或醫檢師執照（不足會提醒，仍可確認）。</div>
+              <div class="dispatch-target-choice-list" id="reservation-candidate-list"></div>
+              <div class="button-row">
+                <button class="btn btn-primary" type="button" id="reservation-assign-btn">指派所選人員</button>
+              </div>
             </div>
           </div>
 
           <div class="status" id="reservation-status"></div>
           <div class="button-row">
             <button class="btn btn-ghost" type="button" id="reservation-back-btn">返回清單</button>
+            <button class="btn btn-primary" type="button" id="reservation-save-btn">儲存預約</button>
           </div>
         </div>
       </section>
@@ -2707,22 +2691,20 @@
         'reservation-list-body',
         'reservation-new-btn',
         'reservation-wizard-view',
-        'reservation-step1',
-        'reservation-step2',
-        'reservation-step3',
         'reservation-source-station',
         'reservation-target-station',
         'reservation-start-date',
         'reservation-end-date',
         'reservation-shift-name',
         'reservation-note',
-        'reservation-step1-save-btn',
+        'reservation-count-section',
         'reservation-demand-count',
         'reservation-demand-hint',
-        'reservation-step2-save-btn',
+        'reservation-assign-section',
         'reservation-assign-summary',
         'reservation-candidate-list',
-        'reservation-step3-save-btn',
+        'reservation-assign-btn',
+        'reservation-save-btn',
         'reservation-status',
         'reservation-back-btn',
         'support-lookup-modal',
@@ -2911,15 +2893,17 @@
       });
       if (el.reservationNewBtn) el.reservationNewBtn.addEventListener('click', () => startReservationWizard(null));
       if (el.reservationBackBtn) el.reservationBackBtn.addEventListener('click', showReservationList);
-      document.querySelectorAll('[data-reservation-step]').forEach((button) => {
-        button.addEventListener('click', () => setReservationStep(Number(button.getAttribute('data-reservation-step'))));
-      });
       document.querySelectorAll('[data-reservation-shift]').forEach((button) => {
         button.addEventListener('click', () => selectReservationShift(button.getAttribute('data-reservation-shift')));
       });
-      if (el.reservationStep1SaveBtn) el.reservationStep1SaveBtn.addEventListener('click', saveReservationStep1);
-      if (el.reservationStep2SaveBtn) el.reservationStep2SaveBtn.addEventListener('click', saveReservationStep2);
-      if (el.reservationStep3SaveBtn) el.reservationStep3SaveBtn.addEventListener('click', assignReservationCandidates);
+      if (el.reservationTargetStation) el.reservationTargetStation.addEventListener('change', updateReservationSectionVisibility);
+      if (el.reservationDemandCount) el.reservationDemandCount.addEventListener('input', updateReservationSectionVisibility);
+      if (el.reservationSourceStation) el.reservationSourceStation.addEventListener('change', () => {
+        updateReservationSectionVisibility();
+        if (!el.reservationAssignSection.classList.contains('hidden')) renderReservationCandidates();
+      });
+      if (el.reservationSaveBtn) el.reservationSaveBtn.addEventListener('click', saveReservationDraft);
+      if (el.reservationAssignBtn) el.reservationAssignBtn.addEventListener('click', () => assignReservationCandidates());
       if (el.reservationListBody) el.reservationListBody.addEventListener('click', handleReservationListClick);
       if (el.reservationCandidateList) el.reservationCandidateList.addEventListener('change', handleReservationCandidateChange);
       if (el.supportLookupClose) el.supportLookupClose.addEventListener('click', closeSupportLookupModal);
@@ -4386,6 +4370,7 @@
         el.reservationTargetStation.value = el.stationSelect.value || '';
         el.reservationStartDate.value = el.dispatchStartDate.value || '';
         el.reservationEndDate.value = el.dispatchEndDate.value || el.dispatchStartDate.value || '';
+        updateReservationSectionVisibility();
         return;
       }
       showReservationList();
@@ -4453,35 +4438,7 @@
       el.reservationNote.value = r ? (r.note || '') : '';
       el.reservationDemandCount.value = r && r.demandCount != null ? r.demandCount : '';
       setReservationStatus('');
-      updateReservationStepAvailability();
-      const startStep = !r ? 1 : (r.demandCount == null ? 2 : 3);
-      setReservationStep(startStep);
-    }
-
-    function updateReservationStepAvailability() {
-      const r = state.activeReservation;
-      const hasId = Boolean(r && r.id);
-      const hasDemand = Boolean(r && r.demandCount != null);
-      document.querySelectorAll('[data-reservation-step]').forEach((button) => {
-        const step = Number(button.getAttribute('data-reservation-step'));
-        button.disabled = (step === 2 && !hasId) || (step === 3 && !hasDemand);
-      });
-    }
-
-    function setReservationStep(step) {
-      const r = state.activeReservation;
-      if (step === 2 && !(r && r.id)) { setReservationStatus('請先完成步驟①並儲存路線。', 'error'); return; }
-      if (step === 3 && !(r && r.demandCount != null)) { setReservationStatus('請先完成步驟②設定人數。', 'error'); return; }
-      state.reservationStep = step;
-      [1, 2, 3].forEach((n) => {
-        const stepEl = el[`reservationStep${n}`];
-        if (stepEl) stepEl.classList.toggle('hidden', n !== step);
-      });
-      document.querySelectorAll('[data-reservation-step]').forEach((button) => {
-        button.classList.toggle('is-active', Number(button.getAttribute('data-reservation-step')) === step);
-      });
-      if (step === 2) updateReservationDemandHint();
-      if (step === 3) renderReservationCandidates();
+      updateReservationSectionVisibility();
     }
 
     function selectReservationShift(mode) {
@@ -4494,18 +4451,57 @@
       });
     }
 
+    // 依「已填資料」漸進顯示：選了目的駐站→顯示人數欄；目的＋有效人數→顯示指派區。
+    function updateReservationSectionVisibility() {
+      const hasTarget = Boolean(el.reservationTargetStation.value);
+      el.reservationCountSection.classList.toggle('hidden', !hasTarget);
+      updateReservationDemandHint();
+
+      const count = Number(el.reservationDemandCount.value);
+      const hasValidCount = Number.isInteger(count) && count >= 1;
+      const showAssign = hasTarget && hasValidCount;
+      el.reservationAssignSection.classList.toggle('hidden', !showAssign);
+      if (showAssign) {
+        renderReservationCandidates();
+      } else {
+        state.reservationSelectedKeys = new Set();
+        el.reservationCandidateList.innerHTML = '';
+      }
+    }
+
     function updateReservationDemandHint() {
       const r = state.activeReservation;
-      const sourceCode = r ? r.originalStationCode : el.reservationSourceStation.value;
+      const sourceCode = el.reservationSourceStation.value || (r ? r.originalStationCode : '');
       const available = getNursesForStation(sourceCode).filter((n) => !n.isUnavailable).length;
       const assigned = r ? Number(r.assignedCount || 0) : 0;
       el.reservationDemandHint.textContent = `來源駐站可用人數約 ${available} 人；已指派 ${assigned} 人，設定人數不可小於已指派。`;
       el.reservationDemandCount.min = String(Math.max(1, assigned));
     }
 
-    async function submitReservationSave(payload, button, defaultLabel, successMessage, nextStep) {
+    // 由目前表單值組出 saveStationReservation payload；demandCount 空值不帶，維持部分儲存能力。
+    function buildReservationSavePayload() {
+      const r = state.activeReservation;
+      const payload = {
+        id: r ? r.id : '',
+        recordVersion: r ? r.version : '',
+        originalStationCode: el.reservationSourceStation.value || '',
+        stationCode: el.reservationTargetStation.value || '',
+        startDate: el.reservationStartDate.value || '',
+        endDate: el.reservationEndDate.value || el.reservationStartDate.value || '',
+        shiftName: el.reservationShiftName.value || '正常班',
+        note: el.reservationNote.value || '',
+        testMode: state.testMode,
+        filters: collectFilters()
+      };
+      const countRaw = String(el.reservationDemandCount.value || '').trim();
+      if (countRaw !== '') payload.demandCount = Number(countRaw);
+      return payload;
+    }
+
+    // 儲存路線（＋人數，若已填）；回傳更新後的 reservation 供指派串接，失敗回傳 null。
+    async function submitReservationSave(payload) {
       state.isSavingReservation = true;
-      setButtonBusy(button, true, '儲存中');
+      setButtonBusy(el.reservationSaveBtn, true, '儲存中');
       setReservationStatus('儲存中...');
       showBusy('正在儲存預約...');
       try {
@@ -4523,66 +4519,50 @@
           el.reservationEndDate.value = r.endDate;
           selectReservationShift(r.shiftName);
           el.reservationNote.value = r.note || '';
-          el.reservationDemandCount.value = r.demandCount != null ? r.demandCount : '';
+          el.reservationDemandCount.value = r.demandCount != null ? r.demandCount : el.reservationDemandCount.value;
         }
-        updateReservationStepAvailability();
-        if (nextStep) setReservationStep(nextStep);
-        setReservationStatus(successMessage, 'success');
+        updateReservationSectionVisibility();
+        return state.activeReservation;
       } catch (error) {
         setReservationStatus(error && error.message ? error.message : '儲存失敗。', 'error');
+        return null;
       } finally {
         state.isSavingReservation = false;
-        setButtonBusy(button, false, defaultLabel);
+        setButtonBusy(el.reservationSaveBtn, false, '儲存預約');
         hideBusy();
       }
     }
 
-    async function saveReservationStep1() {
+    async function saveReservationDraft() {
       if (state.isSavingReservation) return;
-      const r = state.activeReservation;
-      const payload = {
-        id: r ? r.id : '',
-        recordVersion: r ? r.version : '',
-        originalStationCode: el.reservationSourceStation.value || '',
-        stationCode: el.reservationTargetStation.value || '',
-        startDate: el.reservationStartDate.value || '',
-        endDate: el.reservationEndDate.value || el.reservationStartDate.value || '',
-        shiftName: el.reservationShiftName.value || '正常班',
-        note: el.reservationNote.value || '',
-        testMode: state.testMode,
-        filters: collectFilters()
-      };
-      await submitReservationSave(payload, el.reservationStep1SaveBtn, '儲存路線', '路線已儲存，請繼續設定人數。', 2);
+      if (!el.reservationSourceStation.value || !el.reservationTargetStation.value) {
+        setReservationStatus('請選擇來源與目的駐站。', 'error');
+        return;
+      }
+      if (!el.reservationStartDate.value) {
+        setReservationStatus('請選擇支援起日。', 'error');
+        return;
+      }
+      const saved = await submitReservationSave(buildReservationSavePayload());
+      if (saved) setReservationStatus('預約已儲存。', 'success');
     }
 
-    async function saveReservationStep2() {
-      if (state.isSavingReservation) return;
-      const r = state.activeReservation;
-      if (!r || !r.id) { setReservationStatus('請先完成步驟①並儲存路線。', 'error'); return; }
+    // 剩餘可指派名額＝目前人數輸入值 − 已存的已指派數（新預約 assignedCount=0）。
+    function getReservationRemainingQuota() {
       const count = Number(el.reservationDemandCount.value);
-      if (!Number.isInteger(count) || count < 1) { setReservationStatus('請輸入 1 以上的整數人數。', 'error'); return; }
-      const payload = {
-        id: r.id,
-        recordVersion: r.version,
-        originalStationCode: r.originalStationCode,
-        stationCode: r.stationCode,
-        startDate: r.startDate,
-        endDate: r.endDate,
-        shiftName: r.shiftName,
-        note: r.note || '',
-        demandCount: count,
-        testMode: state.testMode,
-        filters: collectFilters()
-      };
-      await submitReservationSave(payload, el.reservationStep2SaveBtn, '儲存人數', '人數已儲存，請指定人員。', 3);
+      const demand = Number.isInteger(count) && count >= 1 ? count : 0;
+      const assigned = state.activeReservation ? Number(state.activeReservation.assignedCount || 0) : 0;
+      return Math.max(0, demand - assigned);
     }
 
     function renderReservationCandidates() {
-      const r = state.activeReservation;
-      if (!r) return;
-      const remaining = Math.max(0, Number(r.demandCount || 0) - Number(r.assignedCount || 0));
-      el.reservationAssignSummary.textContent = `${getReservationStationName(r.originalStationCode)} → ${getReservationStationName(r.stationCode)}｜需求 ${r.demandCount} 人，已指派 ${r.assignedCount || 0} 人，尚缺 ${remaining} 人。`;
-      const candidates = getNursesForStation(r.originalStationCode).filter((n) => !n.isUnavailable);
+      const sourceCode = el.reservationSourceStation.value || (state.activeReservation ? state.activeReservation.originalStationCode : '');
+      const remaining = getReservationRemainingQuota();
+      const assigned = state.activeReservation ? Number(state.activeReservation.assignedCount || 0) : 0;
+      const demand = Number(el.reservationDemandCount.value) || 0;
+      const summary = `${getReservationStationName(sourceCode)} → ${getReservationStationName(el.reservationTargetStation.value)}｜需求 ${demand} 人，已指派 ${assigned} 人，尚缺 ${remaining} 人。`;
+      el.reservationAssignSummary.textContent = summary;
+      const candidates = getNursesForStation(sourceCode).filter((n) => !n.isUnavailable);
       state.reservationSelectedKeys = new Set();
       if (!candidates.length) {
         el.reservationCandidateList.innerHTML = '<div class="muted">此來源駐站沒有可指派人員。</div>';
@@ -4604,8 +4584,7 @@
     function handleReservationCandidateChange(event) {
       const checkbox = event.target.closest('input[type="checkbox"]');
       if (!checkbox) return;
-      const r = state.activeReservation;
-      const remaining = r ? Math.max(0, Number(r.demandCount || 0) - Number(r.assignedCount || 0)) : 0;
+      const remaining = getReservationRemainingQuota();
       if (checkbox.checked) {
         if (state.reservationSelectedKeys.size >= remaining) {
           checkbox.checked = false;
@@ -4622,26 +4601,32 @@
 
     function updateReservationCandidateSummary() {
       const selected = state.reservationSelectedKeys.size;
-      el.reservationStep3SaveBtn.disabled = selected === 0;
-      el.reservationStep3SaveBtn.textContent = selected ? `指派所選 ${selected} 人` : '指派所選人員';
+      el.reservationAssignBtn.disabled = selected === 0;
+      el.reservationAssignBtn.textContent = selected ? `指派所選 ${selected} 人` : '指派所選人員';
     }
 
-    async function assignReservationCandidates(options) {
+    async function assignReservationCandidates() {
       if (state.isSavingReservation) return;
-      const r = state.activeReservation;
-      if (!r || !r.id) return;
       const keys = Array.from(state.reservationSelectedKeys);
       if (!keys.length) { setReservationStatus('請至少選擇一位人員。', 'error'); return; }
-      const confirmWarnings = Boolean(options && options.confirmWarnings);
+      const count = Number(el.reservationDemandCount.value);
+      if (!Number.isInteger(count) || count < 1) { setReservationStatus('請先設定調派人數。', 'error'); return; }
 
+      // 指派前自動存檔目前路線＋人數，確保有 id 與最新 version 可掛上調派。
+      const saved = await submitReservationSave(buildReservationSavePayload());
+      if (!saved || !saved.id) return;
+      await runReservationAssign(saved, keys, false);
+    }
+
+    async function runReservationAssign(saved, keys, confirmWarnings) {
       state.isSavingReservation = true;
-      setButtonBusy(el.reservationStep3SaveBtn, true, '指派中');
+      setButtonBusy(el.reservationAssignBtn, true, '指派中');
       setReservationStatus('指派中...');
       showBusy('正在指派預約人員...');
       try {
         const response = await callServer('assignStationReservation', {
-          id: r.id,
-          recordVersion: r.version,
+          id: saved.id,
+          recordVersion: saved.version,
           assignmentKeys: keys,
           confirmWarnings,
           testMode: state.testMode,
@@ -4650,12 +4635,12 @@
         if (response && response.needsConfirmation) {
           hideBusy();
           state.isSavingReservation = false;
-          setButtonBusy(el.reservationStep3SaveBtn, false);
+          setButtonBusy(el.reservationAssignBtn, false);
           updateReservationCandidateSummary();
           const lines = (response.warnings || []).map((w) => w.message).join('\n');
           const cappedNote = response.capped ? '\n（期間較長，僅檢查前 31 天）' : '';
           if (window.confirm(`目的駐站以下日期組成不足（至少 2 人，且 1 人具護理師/醫檢師執照）：\n${lines}${cappedNote}\n\n仍要確認指派嗎？`)) {
-            return assignReservationCandidates({ confirmWarnings: true });
+            return runReservationAssign(saved, keys, true);
           }
           setReservationStatus('已取消指派。', 'error');
           return;
@@ -4674,15 +4659,17 @@
             el.reservationListStatus.className = 'status success';
           }
         } else {
-          updateReservationStepAvailability();
-          renderReservationCandidates();
+          if (state.activeReservation && state.activeReservation.demandCount != null) {
+            el.reservationDemandCount.value = state.activeReservation.demandCount;
+          }
+          updateReservationSectionVisibility();
           setReservationStatus(successMessage, 'success');
         }
       } catch (error) {
         setReservationStatus(error && error.message ? error.message : '指派失敗。', 'error');
       } finally {
         state.isSavingReservation = false;
-        setButtonBusy(el.reservationStep3SaveBtn, false, '指派所選人員');
+        setButtonBusy(el.reservationAssignBtn, false, '指派所選人員');
         hideBusy();
       }
     }
