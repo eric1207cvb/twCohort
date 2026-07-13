@@ -1677,22 +1677,34 @@ function assignStationReservation(payload) {
   }
 }
 
-// 一次性遷移（於 GAS 編輯器手動執行）：把年度調派紀錄中「待指派」需求轉為預約列（沿用原 id 保證冪等），並自年度表移除。
+// 一次性遷移（於 GAS 編輯器手動執行）：把年度調派紀錄中「待指派」需求轉為預約列
+// （沿用原 id 保證冪等），並自年度表移除。
+// [修正] 改用批次寫入 + 寫入後回讀驗證，避免逐筆 flush 超時和資料遺失。
 function migratePendingDispatchToReservations() {
   const summary = [];
 
   [{ testMode: false, label: '正式' }, { testMode: true, label: '測試' }].forEach((store) => {
     const context = { viewer: { testMode: store.testMode } };
     const records = getStoredDispatchRecords_(context);
-    const pendingRecords = records.filter((record) => record.status === '有效' && isPendingAssignmentRecord_(record));
+    const pendingRecords = records.filter(
+      (record) => record.status === '有效' && isPendingAssignmentRecord_(record)
+    );
     if (!pendingRecords.length) {
       summary.push(`${store.label}：無待指派需求可遷移。`);
       return;
     }
 
     const now = formatTimestamp_(new Date());
-    pendingRecords.forEach((record) => {
-      saveStoredReservation_({
+    const pendingIds = new Set(pendingRecords.map((r) => r.id));
+
+    // ── 步驟 1：讀取已存在的預約（冪等：跳過之前因超時已部分寫入的項目）──
+    const existingReservations = readStoredReservations_(context);
+    const existingIds = new Set(existingReservations.map((r) => r.id));
+
+    // ── 步驟 2：準備並批次寫入尚未遷移的預約 ──
+    const newReservations = pendingRecords
+      .filter((record) => !existingIds.has(record.id))
+      .map((record) => ({
         id: record.id,
         originalStationCode: normalizeOrgCode_(record.originalStationCode),
         originalStationName: record.originalStationName || record.originalStationCode,
@@ -1713,14 +1725,45 @@ function migratePendingDispatchToReservations() {
         updatedBy: record.updatedBy || record.createdBy || '',
         updatedAt: now,
         note: record.note || ''
-      }, context);
-    });
+      }));
 
-    const remaining = records.filter((record) => !(record.status === '有效' && isPendingAssignmentRecord_(record)));
+    if (newReservations.length > 0) {
+      const sheet = getReservationSheet_(true, context);
+      if (!sheet) throw new Error('無法開啟預約紀錄工作表。');
+      const rows = newReservations.map(reservationToRow_);
+      const targetRow = sheet.getLastRow() + 1;
+      sheet.getRange(targetRow, 1, rows.length, RESERVATION_SHEET_HEADERS_.length)
+        .setValues(rows);
+      SpreadsheetApp.flush();
+      invalidateReservationsCache_();
+    }
+
+    // ── 步驟 3：回讀驗證 — 確認所有待遷移紀錄都已存在於預約表中 ──
+    const verifyReservations = readStoredReservations_(context);
+    const verifyIds = new Set(verifyReservations.map((r) => r.id));
+    const missingIds = pendingRecords
+      .filter((record) => !verifyIds.has(record.id))
+      .map((record) => record.id);
+
+    if (missingIds.length > 0) {
+      const errorMsg = `${store.label}：寫入驗證失敗！以下 ${missingIds.length} 筆紀錄未成功寫入預約表，` +
+        `中止清理舊資料以避免資料遺失：${missingIds.slice(0, 5).join(', ')}${missingIds.length > 5 ? '…' : ''}`;
+      console.error(errorMsg);
+      summary.push(errorMsg);
+      return; // 不清理舊資料，保留現狀
+    }
+
+    // ── 步驟 4：驗證通過，安全清理年度表中的舊待指派紀錄 ──
+    const remaining = records.filter(
+      (record) => !(record.status === '有效' && isPendingAssignmentRecord_(record))
+    );
     saveStoredDispatchRecords_(remaining, context);
 
+    // ── 步驟 5：寫入 Audit Logs ──
     appendDispatchAuditLogs_(pendingRecords.reduce((logs, record) => {
-      logs.push(buildDispatchAuditLog_('delete-pending', record, { context, viewerEmail: '', occurredAt: now }));
+      logs.push(buildDispatchAuditLog_('delete-pending', record, {
+        context, viewerEmail: '', occurredAt: now
+      }));
       logs.push(buildDispatchAuditLog_('create-reservation', {
         ...record,
         demandCount: Math.max(1, Number(record.demandCount || 1))
@@ -1728,7 +1771,10 @@ function migratePendingDispatchToReservations() {
       return logs;
     }, []), context);
 
-    summary.push(`${store.label}：已遷移 ${pendingRecords.length} 筆待指派需求為預約。`);
+    summary.push(
+      `${store.label}：驗證通過 ✓ 預約表已有 ${verifyIds.size} 筆（本次新增 ${newReservations.length} 筆），` +
+      `已從年度紀錄清理 ${pendingRecords.length} 筆待指派。`
+    );
   });
 
   const message = summary.join('\n');
