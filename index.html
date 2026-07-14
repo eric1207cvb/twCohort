@@ -329,7 +329,7 @@
     .layout {
       padding: 20px 24px 28px;
       display: grid;
-      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 18px;
       align-items: start;
     }
@@ -366,6 +366,102 @@
 
     .dispatch-panel.is-editing {
       border-color: #f59e0b;
+    }
+
+    .dispatch-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 400px;
+      height: 100vh;
+      max-width: 100vw;
+      display: flex;
+      flex-direction: column;
+      border-radius: 0;
+      transform: translateX(-100%);
+      transition: transform 0.3s ease;
+      z-index: 16;
+    }
+
+    .dispatch-sidebar.is-open {
+      transform: translateX(0);
+    }
+
+    .dispatch-sidebar .panel-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .dispatch-sidebar-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .dispatch-sidebar-close-btn {
+      padding: 6px 10px;
+      line-height: 1;
+    }
+
+    .dispatch-sidebar-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 15;
+    }
+
+    .dispatch-sidebar-backdrop.is-open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .dispatch-edge-sensor {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 16px;
+      height: 100vh;
+      z-index: 14;
+      cursor: pointer;
+    }
+
+    .dispatch-pull-tab {
+      position: fixed;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 17;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 14px 6px;
+      border: 1px solid var(--primary-strong);
+      border-left: 0;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.82rem;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      box-shadow: var(--shadow);
+      opacity: 1;
+      transition: opacity 0.2s ease;
+    }
+
+    .dispatch-pull-tab.is-hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .dispatch-pull-tab-arrow {
+      writing-mode: horizontal-tb;
     }
 
     .edit-context {
@@ -1733,6 +1829,10 @@
       .station-field-actions {
         justify-content: flex-start;
       }
+
+      .dispatch-sidebar {
+        width: 100vw;
+      }
     }
 
     @media print {
@@ -1741,6 +1841,9 @@
       .toolbar,
       .records-query,
       .layout > .panel:first-child,
+      .dispatch-sidebar-backdrop,
+      .dispatch-edge-sensor,
+      .dispatch-pull-tab,
       .schedule-toolbar,
       .schedule-controls {
         display: none !important;
@@ -1811,13 +1914,22 @@
     </div>
 
     <main id="app-main" class="layout hidden">
-      <section class="panel dispatch-panel" id="dispatch-panel">
+      <div id="dispatch-sidebar-backdrop" class="dispatch-sidebar-backdrop"></div>
+      <div id="dispatch-edge-sensor" class="dispatch-edge-sensor" title="滑鼠移到最左側展開新增工時調派"></div>
+      <button id="dispatch-pull-tab" class="dispatch-pull-tab" type="button" title="展開新增工時調派">
+        <span>新增調派</span>
+        <span class="dispatch-pull-tab-arrow" aria-hidden="true">›</span>
+      </button>
+      <section class="panel dispatch-panel dispatch-sidebar" id="dispatch-panel">
         <div class="panel-header">
           <div>
             <div class="panel-title" id="form-title">新增工時調派</div>
             <div class="muted">唯一鍵：護理師信箱 + 所屬組別代碼</div>
           </div>
-          <button class="btn btn-ghost hidden" type="button" id="cancel-edit-btn">取消編輯</button>
+          <div class="dispatch-sidebar-header-actions">
+            <button class="btn btn-ghost hidden" type="button" id="cancel-edit-btn">取消編輯</button>
+            <button class="btn btn-ghost dispatch-sidebar-close-btn" type="button" id="dispatch-sidebar-close-btn" aria-label="關閉新增工時調派側邊欄">✕</button>
+          </div>
         </div>
         <div class="panel-body">
           <form id="dispatch-form" class="form-grid">
@@ -2424,6 +2536,10 @@
         'schedule-head',
         'schedule-body',
         'dispatch-panel',
+        'dispatch-sidebar-backdrop',
+        'dispatch-edge-sensor',
+        'dispatch-pull-tab',
+        'dispatch-sidebar-close-btn',
         'dispatch-form',
         'record-id',
         'record-version',
@@ -2629,6 +2745,10 @@
         setRecordsStatus('已取消修改：月曆與紀錄未變更。', 'success');
       });
       el.dispatchForm.addEventListener('submit', saveDispatch);
+      el.dispatchEdgeSensor.addEventListener('mouseenter', openDispatchSidebar);
+      el.dispatchPullTab.addEventListener('click', openDispatchSidebar);
+      el.dispatchSidebarCloseBtn.addEventListener('click', closeDispatchSidebar);
+      el.dispatchSidebarBackdrop.addEventListener('click', closeDispatchSidebar);
       el.stationModalClose.addEventListener('click', closeStationModal);
       el.stationModal.addEventListener('click', (event) => {
         if (event.target === el.stationModal) closeStationModal();
@@ -3716,7 +3836,7 @@
     function getDeletableStations() {
       if (!(state.viewer && state.viewer.canCreateStation)) return [];
       return getOrderedStations()
-        .filter((station) => station && station.code && isMobileStation(station));
+        .filter((station) => station && station.code && (isMobileStation(station) || Boolean(state.testMode && station.isTestCreated)));
     }
 
     function openDeleteStationModal() {
@@ -3737,7 +3857,9 @@
         el.deleteStationSelect.innerHTML = '<option value="">目前沒有可刪除的系統新增駐站</option>';
         el.deleteStationSelect.disabled = true;
         el.deleteStationSaveBtn.disabled = true;
-        setDeleteStationStatus('目前只允許刪除由本系統新增、且仍未被停用的駐站；正式來源駐站不會列在這裡。');
+        setDeleteStationStatus(state.testMode
+          ? '目前測試模式可刪除測試新增或行動駐站紀錄；正式來源駐站不會列在這裡。'
+          : '目前只允許刪除由本系統新增、且仍未被停用的駐站；正式來源駐站不會列在這裡。');
         return;
       }
       el.deleteStationSelect.innerHTML = stations.map((station) => (
@@ -6045,6 +6167,20 @@
       }
     }
 
+    function openDispatchSidebar() {
+      if (el.dispatchPanel.classList.contains('is-open')) return;
+      el.dispatchPanel.classList.add('is-open');
+      el.dispatchSidebarBackdrop.classList.add('is-open');
+      el.dispatchPullTab.classList.add('is-hidden');
+    }
+
+    function closeDispatchSidebar() {
+      if (!el.dispatchPanel.classList.contains('is-open')) return;
+      el.dispatchPanel.classList.remove('is-open');
+      el.dispatchSidebarBackdrop.classList.remove('is-open');
+      el.dispatchPullTab.classList.remove('is-hidden');
+    }
+
     function editRecord(id) {
       const record = getRecordById(id);
       if (!record) return;
@@ -6077,7 +6213,7 @@
       renderEditContext(record);
       renderRecords();
       setStatus('');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      openDispatchSidebar();
     }
 
     function renderEditContext(record) {
